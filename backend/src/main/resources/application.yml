@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: line-auth
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: 8080
+
+line:
+  channel-id: ${LINE_CHANNEL_ID}
+  channel-secret: ${LINE_CHANNEL_SECRET}
+  redirect-uri: ${LINE_REDIRECT_URI}
+  authorize-endpoint: https://access.line.me/oauth2/v2.1/authorize
+  token-endpoint: https://api.line.me/oauth2/v2.1/token
+  profile-endpoint: https://api.line.me/v2/profile
+
+app:
+  frontend-url: ${FRONTEND_URL}
+  jwt:
+    secret: ${JWT_SECRET}
+    expiry-minutes: ${JWT_EXPIRY_MINUTES:60}
+
+logging:
+  level:
+    com.poc.lineauth: DEBUG
