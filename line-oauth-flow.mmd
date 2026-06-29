@@ -1,0 +1,43 @@
+sequenceDiagram
+    autonumber
+    actor U as 使用者瀏覽器
+    participant FE as 前端 (React/Vite)
+    participant BE as 後端 (Spring Boot)
+    participant DB as 資料庫
+    participant LINE as LINE 平台
+
+    Note over U,LINE: 階段一 發起登入
+    U->>FE: 進入 /login 點擊「使用 LINE 登入」
+    FE->>BE: GET /api/auth/line/authorize
+    BE->>BE: 產生隨機 state (CSRF 防護)
+    BE-->>U: Set-Cookie line_oauth_state (HttpOnly)<br/>302 轉址至 LINE authorize
+
+    Note over U,LINE: 階段二 LINE 端授權
+    U->>LINE: 帶 client_id / redirect_uri / state / scope(profile openid)
+    LINE-->>U: 顯示登入與同意授權畫面
+    U->>LINE: 完成登入並同意
+    LINE-->>U: 302 轉址回 /api/auth/line/callback?code&state
+
+    Note over U,LINE: 階段三 後端換 token 與簽發 JWT
+    U->>BE: GET /api/auth/line/callback?code&state
+    BE->>BE: 比對 cookie state 與 query state<br/>不符則導回前端錯誤頁
+    BE->>LINE: POST token endpoint<br/>(code + client_secret 換 access_token)
+    LINE-->>BE: access_token
+    BE->>LINE: GET profile (Bearer access_token)
+    LINE-->>BE: userId / displayName / pictureUrl
+    BE->>DB: upsert 使用者 (依 lineUserId)
+    DB-->>BE: User
+    BE->>BE: 簽發自家 JWT
+    BE-->>U: 302 轉址至前端 /auth/callback?token=JWT
+
+    Note over U,LINE: 階段四 前端保存與存取受保護資源
+    U->>FE: 進入 /auth/callback
+    FE->>FE: 將 JWT 存入 localStorage<br/>導向 /products
+    FE->>BE: GET /api/me (Authorization: Bearer JWT)
+    BE->>BE: JwtAuthFilter 驗證 JWT
+    BE->>DB: 依 JWT subject 查 User
+    DB-->>BE: User
+    BE-->>FE: 使用者資料 (200)
+    FE-->>U: 顯示商品頁與使用者資訊
+
+    Note over FE,BE: 失敗情境<br/>JWT 無效或過期 → 401 → 前端清除 token 並導回 /login
