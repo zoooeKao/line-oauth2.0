@@ -2,8 +2,8 @@
 
 | 項目     | 內容                                                                                     |
 | -------- | ---------------------------------------------------------------------------------------- |
-| 文件版本 | v0.1（草稿，供團隊報告補充）                                                             |
-| 撰寫日期 | 2026-06-29                                                                               |
+| 文件版本 | v0.2（草稿，新增「登入時加入官方帳號」流程）                                             |
+| 撰寫日期 | 2026-06-29（v0.2 更新：2026-07-19）                                                       |
 | 專案性質 | 概念驗證（POC）— 驗證「LINE 登入 → 後端簽發自家 JWT → 前端存取受保護資源」的最小可行流程 |
 | 撰寫者   | （待補）                                                                                 |
 
@@ -21,8 +21,10 @@
 - `state` + HttpOnly Cookie 的 CSRF 防護
 - 後端以 Channel secret 換 `access_token`、取得使用者 profile
 - 依 `lineUserId` upsert 使用者
+- **登入時引導加入 LINE 官方帳號**（`bot_prompt` + Friendship Status API 查詢 `friendFlag`）
 - 簽發 / 驗證自家 JWT，保護 `/api/me`
 - 前端登入頁、回呼頁、商品頁與 401 自動登出
+- 商品頁對未加入官方帳號者顯示「加入官方帳號」提示
 
 ### 1.3 不在範圍（Out of Scope，POC 限制）
 
@@ -62,7 +64,7 @@ flowchart LR
 | 套件     | 元件                                      | 職責                                      |
 | -------- | ----------------------------------------- | ----------------------------------------- |
 | `auth`   | `AuthController`                          | `/authorize`、`/callback`、`/me` 端點     |
-| `auth`   | `LineOAuthClient`                         | 呼叫 LINE token / profile API             |
+| `auth`   | `LineOAuthClient`                         | 呼叫 LINE token / profile / friendship API |
 | `auth`   | `JwtService`                              | 簽發 / 解析 HS256 JWT                     |
 | `auth`   | `JwtAuthFilter`                           | 每請求驗 Bearer JWT，注入 SecurityContext |
 | `config` | `SecurityConfig`                          | Spring Security 過濾鏈、CORS、401 策略    |
@@ -80,36 +82,46 @@ flowchart LR
 3. 後端產生 32 byte 隨機 `state`（`SecureRandom`，CSRF 防護）。
 4. 後端寫入 **HttpOnly Cookie** `line_oauth_state`（Path 限 `/api/auth/line`、10 分鐘、SameSite=Lax），並 `302` 導向 LINE authorize。
 
-### 階段二　LINE 端授權
+### 階段二　LINE 端授權（含加入官方帳號）
 
-5. 瀏覽器帶 `client_id / redirect_uri / state / scope=profile openid` 到 LINE。
-6. LINE 顯示登入與同意畫面。
-7. 使用者完成登入並同意。
-8. LINE `302` 導回 `/api/auth/line/callback?code&state`。
+5. 瀏覽器帶 `client_id / redirect_uri / state / scope=profile openid` 及 **`bot_prompt=aggressive`** 到 LINE。
+6. LINE 顯示登入與同意畫面，並提供「加入官方帳號」選項（需 Login channel 已綁定 Linked OA，見 4.1）。
+7. 使用者完成登入、同意，並選擇是否加入官方帳號。
+8. LINE `302` 導回 `/api/auth/line/callback?code&state&friendship_status_changed`。
 
 ### 階段三　後端換 token 與簽發 JWT
 
-9. 瀏覽器將 `code`、`state` 交給後端 callback。
+9. 瀏覽器將 `code`、`state`、`friendship_status_changed` 交給後端 callback。
 10. 後端比對 Cookie `state` 與 query `state`，不符回前端錯誤頁（`invalid_state`）；同時清除 state cookie。
 11. 後端 `POST` LINE token endpoint，以 `code` + **`client_secret`（= Channel secret）** 換 `access_token`。
 12. LINE 回傳 `access_token`。
 13. 後端 `GET` profile（`Bearer access_token`）。
 14. LINE 回傳 `userId / displayName / pictureUrl`。
-15. `UserService.upsertFromLineProfile()` 依 `lineUserId` 新建或更新。
-16. DB 回傳 `User`。
-17. `JwtService.issue()` 簽發自家 JWT（`sub=userId`，含 `lineUserId`、`displayName`）。
-18. 後端 `302` 導向前端 `/auth/callback?token=JWT`。
+15. 後端 `GET` friendship status（`Bearer access_token`），取得 `friendFlag`（是否已加入官方帳號）。`friendship_status_changed` 僅代表本次是否有變動，當下狀態一律以此 API 為準。
+16. `UserService.upsertFromLineProfile()` 依 `lineUserId` 新建或更新，並寫入 `officialAccountFollowed`。
+17. DB 回傳 `User`。
+18. `JwtService.issue()` 簽發自家 JWT（`sub=userId`，含 `lineUserId`、`displayName`）。
+19. 後端 `302` 導向前端 `/auth/callback?token=JWT`。
 
 ### 階段四　前端保存與存取受保護資源
 
-19. 前端進入 `/auth/callback`。
-20. 取出 token 存入 `localStorage`，導向 `/products`。
-21. 前端 `GET /api/me`，axios 攔截器自動附 `Authorization: Bearer JWT`。
-22. `JwtAuthFilter` 驗章、取 `sub`。
-23. 依 `sub` 查 `User`，放入 SecurityContext。
-24. DB 回傳 `User`。
-25. 後端回 `200` + 使用者資料。
-26. 前端顯示商品頁與使用者資訊。
+20. 前端進入 `/auth/callback`。
+21. 取出 token 存入 `localStorage`，導向 `/products`。
+22. 前端 `GET /api/me`，axios 攔截器自動附 `Authorization: Bearer JWT`。
+23. `JwtAuthFilter` 驗章、取 `sub`。
+24. 依 `sub` 查 `User`，放入 SecurityContext。
+25. DB 回傳 `User`。
+26. 後端回 `200` + 使用者資料（含 `officialAccountFollowed`、`oaAddFriendUrl`）。
+27. 前端顯示商品頁；若 `officialAccountFollowed=false`，於商品列表上方顯示「加入官方帳號」提示按鈕（連向 `oaAddFriendUrl`）。
+
+### 4.1　前置設定：綁定 Linked LINE Official Account
+
+`bot_prompt` 只有在 **LINE Login channel 綁定了官方帳號** 時才生效，否則參數會被忽略、加好友選項不會出現。設定重點：
+
+- Login channel 與目標官方帳號（Messaging API channel）須在**同一個 Provider** 下。
+- 於 LINE Login channel 設定頁的「Linked LINE Official Account」選定該官方帳號（本 POC 為 `@901yglmb`）。
+- `bot_prompt=aggressive`：同意後另跳一張加好友頁（較明確）；`normal`：於同意畫面內附加好友選項。
+- **補救機制**：`bot_prompt` 對「已授權過或已是好友」的使用者不會再跳，故前端另以 `friendFlag` 為準顯示 `oaAddFriendUrl` 手動加入按鈕。
 
 ### 失敗情境
 
@@ -122,8 +134,8 @@ JWT 無效或過期 → 後端回 **401**（`HttpStatusEntryPoint`）→ 前端 
 | Method | Path                       | 認證       | 說明                       | 回應                                                      |
 | ------ | -------------------------- | ---------- | -------------------------- | --------------------------------------------------------- |
 | GET    | `/api/auth/line/authorize` | 否         | 產生 state、302 轉址 LINE  | `302` → LINE                                              |
-| GET    | `/api/auth/line/callback`  | 否         | 驗 state、換 token、簽 JWT | `302` → 前端（成功帶 `token`，失敗帶 `error`）            |
-| GET    | `/api/me`                  | Bearer JWT | 取登入者資料               | `200` `{id, lineUserId, displayName, pictureUrl}` / `401` |
+| GET    | `/api/auth/line/callback`  | 否         | 驗 state、換 token、查好友狀態、簽 JWT | `302` → 前端（成功帶 `token`，失敗帶 `error`）            |
+| GET    | `/api/me`                  | Bearer JWT | 取登入者資料               | `200` `{id, lineUserId, displayName, pictureUrl, officialAccountFollowed, oaAddFriendUrl}` / `401` |
 | GET    | `/actuator/health`         | 否         | 健康檢查                   | `200`                                                     |
 
 ---
@@ -138,6 +150,7 @@ JWT 無效或過期 → 後端回 **401**（`HttpStatusEntryPoint`）→ 前端 
 | `line_user_id` | VARCHAR   | NOT NULL, **UNIQUE**（upsert 鍵） |
 | `display_name` | VARCHAR   | NOT NULL                          |
 | `picture_url`  | VARCHAR   | nullable                          |
+| `official_account_followed` | BOOLEAN | NOT NULL, 預設 false（是否已加入官方帳號） |
 | `created_at`   | TIMESTAMP | NOT NULL, 不可更新                |
 | `updated_at`   | TIMESTAMP | NOT NULL                          |
 
@@ -174,9 +187,11 @@ JWT 無效或過期 → 後端回 **401**（`HttpStatusEntryPoint`）→ 前端 
 | `FRONTEND_URL`        | CORS 白名單 + 回呼導向目標                     |
 | `JWT_SECRET`          | 自家 JWT 簽章密鑰（`openssl rand -base64 48`） |
 | `JWT_EXPIRY_MINUTES`  | JWT 有效期（預設 60）                          |
+| `LINE_BOT_PROMPT`     | 加入官方帳號提示模式（`aggressive` / `normal`，預設 `aggressive`） |
+| `LINE_OA_ADD_FRIEND_URL` | 官方帳號加好友連結（預設 `https://line.me/R/ti/p/@901yglmb`） |
 | `POSTGRES_*`          | 資料庫連線                                     |
 
-LINE 端點（固定）：`authorize` `https://access.line.me/oauth2/v2.1/authorize`、`token` `https://api.line.me/oauth2/v2.1/token`、`profile` `https://api.line.me/v2/profile`。
+LINE 端點（固定）：`authorize` `https://access.line.me/oauth2/v2.1/authorize`、`token` `https://api.line.me/oauth2/v2.1/token`、`profile` `https://api.line.me/v2/profile`、`friendship` `https://api.line.me/friendship/v1/status`。
 
 ---
 

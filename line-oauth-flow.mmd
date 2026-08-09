@@ -12,20 +12,22 @@ sequenceDiagram
     BE->>BE: 產生隨機 state (CSRF 防護)
     BE-->>U: Set-Cookie line_oauth_state (HttpOnly)<br/>302 轉址至 LINE authorize
 
-    Note over U,LINE: 階段二 LINE 端授權
-    U->>LINE: 帶 client_id / redirect_uri / state / scope(profile openid)
-    LINE-->>U: 顯示登入與同意授權畫面
-    U->>LINE: 完成登入並同意
-    LINE-->>U: 302 轉址回 /api/auth/line/callback?code&state
+    Note over U,LINE: 階段二 LINE 端授權 (含加入官方帳號)
+    U->>LINE: 帶 client_id / redirect_uri / state<br/>scope(profile openid) / bot_prompt=aggressive
+    LINE-->>U: 顯示登入與同意授權畫面<br/>並提供「加入官方帳號」選項
+    U->>LINE: 完成登入 / 同意 / 選擇是否加入官方帳號
+    LINE-->>U: 302 轉址回 /api/auth/line/callback<br/>?code&state&friendship_status_changed
 
     Note over U,LINE: 階段三 後端換 token 與簽發 JWT
-    U->>BE: GET /api/auth/line/callback?code&state
+    U->>BE: GET /api/auth/line/callback?code&state&friendship_status_changed
     BE->>BE: 比對 cookie state 與 query state<br/>不符則導回前端錯誤頁
     BE->>LINE: POST token endpoint<br/>(code + client_secret 換 access_token)
     LINE-->>BE: access_token
     BE->>LINE: GET profile (Bearer access_token)
     LINE-->>BE: userId / displayName / pictureUrl
-    BE->>DB: upsert 使用者 (依 lineUserId)
+    BE->>LINE: GET friendship/v1/status (Bearer access_token)
+    LINE-->>BE: friendFlag (是否已加入官方帳號)
+    BE->>DB: upsert 使用者 (依 lineUserId, 含 officialAccountFollowed)
     DB-->>BE: User
     BE->>BE: 簽發自家 JWT
     BE-->>U: 302 轉址至前端 /auth/callback?token=JWT
@@ -37,7 +39,7 @@ sequenceDiagram
     BE->>BE: JwtAuthFilter 驗證 JWT
     BE->>DB: 依 JWT subject 查 User
     DB-->>BE: User
-    BE-->>FE: 使用者資料 (200)
-    FE-->>U: 顯示商品頁與使用者資訊
+    BE-->>FE: 使用者資料 (200)<br/>含 officialAccountFollowed / oaAddFriendUrl
+    FE-->>U: 顯示商品頁與使用者資訊<br/>未加入官方帳號則顯示「加入官方帳號」提示按鈕
 
     Note over FE,BE: 失敗情境<br/>JWT 無效或過期 → 401 → 前端清除 token 並導回 /login
