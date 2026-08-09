@@ -1,5 +1,7 @@
 package com.poc.lineauth.auth;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.poc.lineauth.config.LineProperties;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -40,4 +42,20 @@ public class LineOAuthClient {
                 .retrieve()
                 .body(LineProfile.class);
     }
+
+    /**
+     * 查詢使用者目前是否為已連結官方帳號的好友。
+     * friendFlag=true 代表已加入官方帳號。
+     */
+    public boolean isFriend(String accessToken) {
+        FriendshipStatus status = http.get()
+                .uri(props.friendshipEndpoint())
+                .header("Authorization", "Bearer " + accessToken)
+                .retrieve()
+                .body(FriendshipStatus.class);
+        return status != null && status.friendFlag();
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record FriendshipStatus(@JsonProperty("friendFlag") boolean friendFlag) {}
 }
