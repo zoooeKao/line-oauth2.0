@@ -8,6 +8,8 @@ type Me = {
   lineUserId: string;
   displayName: string;
   pictureUrl: string;
+  officialAccountFollowed: boolean;
+  oaAddFriendUrl: string;
 };
 
 const mockProducts = [
@@ -60,6 +62,23 @@ export default function ProductsPage() {
       </header>
 
       <main className="max-w-4xl mx-auto px-6 py-8">
+        {!me.officialAccountFollowed && (
+          <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-4">
+            <div>
+              <div className="font-medium text-emerald-800">還沒加入我們的官方帳號</div>
+              <div className="text-sm text-emerald-700">加入即可接收訂單通知與專屬優惠。</div>
+            </div>
+            <a
+              href={me.oaAddFriendUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 text-center text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-md"
+            >
+              加入官方帳號
+            </a>
+          </div>
+        )}
+
         <h2 className="text-xl font-semibold text-slate-800 mb-4">商品列表</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {mockProducts.map((p) => (
