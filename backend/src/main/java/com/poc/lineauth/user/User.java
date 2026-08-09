@@ -1,6 +1,7 @@
 package com.poc.lineauth.user;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.ColumnDefault;
 
 import java.time.Instant;
 
@@ -19,6 +20,10 @@ public class User {
     private String displayName;
 
     private String pictureUrl;
+
+    @Column(name = "official_account_followed", nullable = false)
+    @ColumnDefault("false")
+    private boolean officialAccountFollowed = false;
 
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
@@ -45,6 +50,8 @@ public class User {
     public void setDisplayName(String v) { this.displayName = v; }
     public String getPictureUrl() { return pictureUrl; }
     public void setPictureUrl(String v) { this.pictureUrl = v; }
+    public boolean isOfficialAccountFollowed() { return officialAccountFollowed; }
+    public void setOfficialAccountFollowed(boolean v) { this.officialAccountFollowed = v; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 }
