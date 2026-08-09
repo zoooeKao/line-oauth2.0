@@ -26,6 +26,10 @@ line:
   authorize-endpoint: https://access.line.me/oauth2/v2.1/authorize
   token-endpoint: https://api.line.me/oauth2/v2.1/token
   profile-endpoint: https://api.line.me/v2/profile
+  friendship-endpoint: https://api.line.me/friendship/v1/status
+  bot-prompt: ${LINE_BOT_PROMPT:normal}
+  prompt: ${LINE_PROMPT:consent}
+  oa-add-friend-url: ${LINE_OA_ADD_FRIEND_URL:https://line.me/R/ti/p/@901yglmb}
 
 app:
   frontend-url: ${FRONTEND_URL}
