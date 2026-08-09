@@ -57,6 +57,10 @@ public class AuthController {
                 .queryParam("redirect_uri", lineProps.redirectUri())
                 .queryParam("state", state)
                 .queryParam("scope", "profile openid")
+                // bot_prompt 讓授權畫面出現「加入官方帳號」選項（需在 Console 綁定 Linked OA）
+                .queryParam("bot_prompt", lineProps.botPrompt())
+                // prompt=consent 強制重新顯示同意授權畫面，避免已授權者被跳過而看不到加好友 toggle
+                .queryParam("prompt", lineProps.prompt())
                 .encode()
                 .build()
                 .toUriString();
@@ -68,6 +72,7 @@ public class AuthController {
                                 @RequestParam(required = false) String state,
                                 @RequestParam(required = false) String error,
                                 @RequestParam(name = "error_description", required = false) String errorDescription,
+                                @RequestParam(name = "friendship_status_changed", required = false) String friendshipStatusChanged,
                                 HttpServletRequest request,
                                 HttpServletResponse response) {
         if (error != null) {
@@ -86,7 +91,9 @@ public class AuthController {
         try {
             LineTokenResponse token = lineClient.exchangeCodeForToken(code);
             LineProfile profile = lineClient.fetchProfile(token.accessToken());
-            User user = userService.upsertFromLineProfile(profile);
+            // friendship_status_changed 只代表本次是否有變動；當下好友狀態以 Friendship API 為準
+            boolean isFriend = lineClient.isFriend(token.accessToken());
+            User user = userService.upsertFromLineProfile(profile, isFriend);
             String jwt = jwtService.issue(user);
 
             String redirect = UriComponentsBuilder.fromHttpUrl(appProps.frontendUrl() + "/auth/callback")
@@ -105,7 +112,9 @@ public class AuthController {
                 "id", user.getId(),
                 "lineUserId", user.getLineUserId(),
                 "displayName", user.getDisplayName(),
-                "pictureUrl", user.getPictureUrl() == null ? "" : user.getPictureUrl()
+                "pictureUrl", user.getPictureUrl() == null ? "" : user.getPictureUrl(),
+                "officialAccountFollowed", user.isOfficialAccountFollowed(),
+                "oaAddFriendUrl", lineProps.oaAddFriendUrl()
         ));
     }
 
