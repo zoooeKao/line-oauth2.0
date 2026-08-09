@@ -14,11 +14,12 @@ public class UserService {
     }
 
     @Transactional
-    public User upsertFromLineProfile(LineProfile profile) {
+    public User upsertFromLineProfile(LineProfile profile, boolean officialAccountFollowed) {
         return userRepository.findByLineUserId(profile.userId())
             .map(existing -> {
                 existing.setDisplayName(profile.displayName());
                 existing.setPictureUrl(profile.pictureUrl());
+                existing.setOfficialAccountFollowed(officialAccountFollowed);
                 return existing;
             })
             .orElseGet(() -> {
@@ -26,6 +27,7 @@ public class UserService {
                 u.setLineUserId(profile.userId());
                 u.setDisplayName(profile.displayName());
                 u.setPictureUrl(profile.pictureUrl());
+                u.setOfficialAccountFollowed(officialAccountFollowed);
                 return userRepository.save(u);
             });
     }
