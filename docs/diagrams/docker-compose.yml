@@ -16,7 +16,7 @@ services:
       retries: 10
 
   backend:
-    build: ./backend
+    build: ../../backend
     ports:
       - "8080:8080"
     environment:
@@ -26,6 +26,7 @@ services:
       LINE_CHANNEL_ID: ${LINE_CHANNEL_ID}
       LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET}
       LINE_REDIRECT_URI: ${LINE_REDIRECT_URI}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN}
       FRONTEND_URL: ${FRONTEND_URL}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRY_MINUTES: ${JWT_EXPIRY_MINUTES}
@@ -34,7 +35,7 @@ services:
         condition: service_healthy
 
   frontend:
-    build: ./frontend
+    build: ../../frontend
     ports:
       - "5173:5173"
     volumes:
