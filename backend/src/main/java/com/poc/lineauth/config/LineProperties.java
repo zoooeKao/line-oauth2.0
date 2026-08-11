@@ -13,5 +13,8 @@ public record LineProperties(
         String friendshipEndpoint,
         String botPrompt,
         String prompt,
-        String oaAddFriendUrl
+        String oaAddFriendUrl,
+        String channelAccessToken,
+        String pushEndpoint,
+        String multicastEndpoint
 ) {}
