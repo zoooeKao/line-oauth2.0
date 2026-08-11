@@ -30,6 +30,9 @@ line:
   bot-prompt: ${LINE_BOT_PROMPT:normal}
   prompt: ${LINE_PROMPT:consent}
   oa-add-friend-url: ${LINE_OA_ADD_FRIEND_URL:https://line.me/R/ti/p/@901yglmb}
+  channel-access-token: ${LINE_CHANNEL_ACCESS_TOKEN}
+  push-endpoint: https://api.line.me/v2/bot/message/push
+  multicast-endpoint: https://api.line.me/v2/bot/message/multicast
 
 app:
   frontend-url: ${FRONTEND_URL}
