@@ -37,6 +37,9 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers("/actuator/health").permitAll()
+                // 讓 Spring Boot forward 到 /error 渲染錯誤頁時不會被 Security 二次攔截成 401，
+                // 蓋掉真實的 400/404/500 狀態碼
+                .requestMatchers("/error").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
