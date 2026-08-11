@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { tokenStore } from '../lib/auth';
@@ -10,6 +11,19 @@ type Me = {
   pictureUrl: string;
   officialAccountFollowed: boolean;
   oaAddFriendUrl: string;
+};
+
+type Recipient = {
+  lineUserId: string;
+  displayName: string;
+  pictureUrl: string;
+  officialAccountFollowed: boolean;
+};
+
+type MulticastResponse = {
+  status: string;
+  requestId: string;
+  sentTo: number;
 };
 
 const mockProducts = [
@@ -89,7 +103,122 @@ export default function ProductsPage() {
             </div>
           ))}
         </div>
+
+        <BroadcastSection />
       </main>
     </div>
   );
+}
+
+function BroadcastSection() {
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [text, setText] = useState('');
+
+  const { data: recipients, isLoading: recipientsLoading, isError: recipientsError } = useQuery<Recipient[]>({
+    queryKey: ['recipients'],
+    queryFn: async () => (await api.get<Recipient[]>('/api/users/recipients')).data,
+  });
+
+  const mutation = useMutation<MulticastResponse, unknown, { lineUserIds: string[]; text: string }>({
+    mutationFn: async (body) => (await api.post<MulticastResponse>('/api/messages/multicast', body)).data,
+    onSuccess: () => {
+      setText('');
+      setSelectedIds([]);
+    },
+  });
+
+  const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const ids = Array.from(e.target.selectedOptions).map((opt) => opt.value);
+    setSelectedIds(ids);
+  };
+
+  const handleSend = () => {
+    if (selectedIds.length === 0 || !text.trim()) return;
+    mutation.mutate({ lineUserIds: selectedIds, text: text.trim() });
+  };
+
+  const disabled = selectedIds.length === 0 || !text.trim() || mutation.isPending;
+
+  return (
+    <section className="mt-10 bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+      <h2 className="text-xl font-semibold text-slate-800 mb-1">傳送 LINE 訊息（Multicast）</h2>
+      <p className="text-sm text-slate-500 mb-4">
+        選擇一或多位收件人，輸入文字後發送。未追蹤官方帳號的收件人會被 LINE 靜默略過。
+      </p>
+
+      {recipientsLoading && <div className="text-slate-500 text-sm">收件人清單載入中…</div>}
+      {recipientsError && <div className="text-red-500 text-sm">無法載入收件人清單</div>}
+
+      {recipients && (
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              收件人 <span className="text-slate-400 font-normal">（按住 ⌘ / Ctrl 可多選，至少 1 位、最多 500 位）</span>
+            </label>
+            <select
+              multiple
+              size={Math.min(Math.max(recipients.length, 3), 8)}
+              value={selectedIds}
+              onChange={handleSelectChange}
+              className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              {recipients.map((r) => (
+                <option key={r.lineUserId} value={r.lineUserId}>
+                  {r.displayName} — {r.lineUserId} {r.officialAccountFollowed ? '' : '（未追蹤 OA）'}
+                </option>
+              ))}
+            </select>
+            <div className="text-xs text-slate-500 mt-1">已選 {selectedIds.length} 位</div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              訊息內容 <span className="text-slate-400 font-normal">（最多 5000 字）</span>
+            </label>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={4}
+              maxLength={5000}
+              placeholder="輸入要發送的訊息…"
+              className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <div className="text-xs text-slate-500 mt-1">{text.length} / 5000</div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleSend}
+              disabled={disabled}
+              className="text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed px-5 py-2 rounded-md"
+            >
+              {mutation.isPending ? '傳送中…' : '發送'}
+            </button>
+
+            {mutation.isSuccess && mutation.data && (
+              <span className="text-sm text-emerald-700">
+                ✓ 已送出 {mutation.data.sentTo} 位（requestId：{mutation.data.requestId ?? '—'}）
+              </span>
+            )}
+            {mutation.isError && (
+              <span className="text-sm text-red-600">
+                ✗ 發送失敗：{extractErrorMessage(mutation.error)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function extractErrorMessage(err: unknown): string {
+  if (err && typeof err === 'object' && 'response' in err) {
+    const resp = (err as { response?: { status?: number; data?: unknown } }).response;
+    if (resp) {
+      const body = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+      return `${resp.status} ${body}`;
+    }
+  }
+  return err instanceof Error ? err.message : String(err);
 }
