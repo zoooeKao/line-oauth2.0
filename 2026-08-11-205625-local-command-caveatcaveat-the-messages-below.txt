@@ -1,0 +1,2213 @@
+ ▐▛███▜▌   Claude Code v2.1.226
+▝▜█████▛▘  Opus 4.7 · Claude Pro
+  ▘▘ ▝▝    ~/projects/line-oauth-poc
+
+
+❯ /clear                                                                        
+
+❯ 接下來我要串接 Line Messaging API, 可以將訊息發送給特定對象。官方文件https:// 
+  developers.line.biz/en/reference/messaging-api/#send-push-message             
+
+⏺ Explore(Explore LINE OAuth POC codebase)
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+⏺ 我先派出 Explore agent 掃描現有程式碼，了解目前 LINE 相關的整合、設定與 HTTP
+  client 模式。等結果回來後再進入設計階段。
+
+✻ Worked for 27s
+
+⏺ Agent "Explore LINE OAuth POC codebase" finished · 2m 18s
+
+⏺ 探索完成，現有結構我已經掌握：
+  - Spring Boot 3.3.5 + Java 21 + Maven，同步 RestClient 模式
+  - 現有 LineOAuthClient 已示範怎麼呼叫 LINE API，但沒有共享 RestClient
+  bean、沒有錯誤處理包裝、沒有測試
+  - LineProperties 是 record（@ConfigurationPropertiesScan 掃入），還沒有
+  Messaging API 所需的 channel access token
+  - User.lineUserId 就是 push message 需要的 to；officialAccountFollowed
+  已標示能否送達
+  - 目前完全沒有 messaging package、沒有 .env 裡的 channel access token、沒有
+  src/test
+
+  在往設計階段推進前，我想先跟你確認幾個會影響 API 形狀的關鍵決策：
+
+⏺ User answered Claude's questions:
+  ⎿  · 誰觸發推播？也就是這個 POC 想暴露成什麼樣的 API？ → 管理者手動指定收件人 
+     (Recommended)
+     · 第一版要支援哪些訊息型別？ → 只支援 text (Recommended)
+
+⏺ 好，兩題已回答。第三題（未追蹤 OA 的處理）我先採用推薦方案：後端先擋，回 409 
+  並附上 oaAddFriendUrl，會在計畫裡標出這個假設。
+
+  現在派 Plan agent 設計實作方案：
+
+⏺ Plan(Plan LINE Messaging push endpoint)
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+⏺ Plan agent 已派出，等結果回來後我會整合成最終計畫。
+
+✻ Crunched for 1m 23s
+
+⏺ Agent "Plan LINE Messaging push endpoint" finished · 1m 58s
+
+⏺ Plan agent 已回。我先驗證幾個關鍵的實際 API 名稱與檔案結構，避免計畫寫錯：
+
+  Read 4 files (ctrl+o to expand)
+
+⏺ 驗證完成：
+  - User.isOfficialAccountFollowed() getter 名稱正確
+  - SecurityConfig 的 anyRequest().authenticated() 確實會保護 /api/messages/**
+  - docker-compose.yml 的 backend.environment 區塊格式對得上，新加一行 env 即可
+  - LineOAuthClient 的 RestClient 模式跟計畫一致
+
+  （Task tools 就先不動 —— 這輪只是規劃，不需要拆任務清單。）
+
+  現在把最終計畫寫入計畫檔：
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ User approved Claude's plan
+  ⎿  Plan saved to: ~/.claude/plans/line-messaging-api-synthetic-stallman.md · 
+     /plan to edit
+     LINE Messaging API — Push Message (single recipient, text-only)
+
+     Context
+
+     專案 line-oauth-poc 目前只做完 LINE Login + friendship
+     檢查，會把使用者是否追蹤官方帳號寫進
+     User.officialAccountFollowed，但還沒有能力主動發訊息給使用者。
+
+     這次要串接 LINE Messaging API 的 push endpoint（https://developers.line.biz
+     /en/reference/messaging-api/#send-push-message），讓管理者可以透過後端 API
+     指定某位已登入過本系統的 LINE 使用者，把一段文字訊息推到對方的 LINE。
+
+     範圍已跟使用者確認：
+     - 觸發方式：管理者呼叫 REST endpoint
+     手動指定收件人（不是使用者發給自己、也不是登入時自動發）
+     - 訊息型別：第一版只支援 text
+     - 未追蹤 OA 的處理：後端先擋，回 409 並附上 oaAddFriendUrl，省一次對 LINE
+     的 API 呼叫也省配額（本題未直接回答，採推薦預設，實作時如要改為「直接送、由
+     LINE 回 403 再轉」也很好改）
+
+     Approach
+
+     在 com.poc.lineauth 新增 messaging package，內含 controller / service /
+     client / DTO，全部沿用現有 LineOAuthClient 的 RestClient
+     同步呼叫模式。認證直接吃現有 JwtAuthFilter + SecurityConfig（/api/auth/**
+     以外都需要 JWT，/api/messages/** 自動被保護）。
+
+     流程：POST /api/messages/push → MessagingController →
+     MessagingService（UserRepository.findByLineUserId → 檢查
+     isOfficialAccountFollowed()）→ LineMessagingClient.pushText(...) → 回
+     {status, requestId}。
+
+     錯誤處理刻意留在 controller 內用兩個 @ExceptionHandler，不引入全域
+     @ControllerAdvice，維持 POC 精簡。
+
+     Files to create
+
+     全部放在 backend/src/main/java/com/poc/lineauth/messaging/：
+
+     檔案: PushMessageRequest.java
+     責任: request DTO，record(String lineUserId, String text)，@NotBlank +
+     @Pattern("^U[0-9a-f]{32}$") + @Size(max=5000)
+     ────────────────────────────────────────
+     檔案: PushMessageResponse.java
+     責任: response DTO，record(String status, String requestId)，含 static
+     factory
+     sent(requestId)
+     ────────────────────────────────────────
+     檔案: UserNotFollowingException.java
+     責任: RuntimeException，攜帶 oaAddFriendUrl
+     ────────────────────────────────────────
+     檔案: LineApiException.java
+     責任: RuntimeException，攜帶 HttpStatusCode status + String body，供
+     controller
+     記 log 與轉換狀態碼
+     ────────────────────────────────────────
+     檔案: LineMessagingClient.java
+     責任: 對 POST https://api.line.me/v2/bot/message/push 的封裝；欄位
+     RestClient 
+     http = RestClient.create()（比照 LineOAuthClient），組出 {"to": 
+     "...","messages":[{"type":"text","text":"..."}]} payload，Authorization: 
+     Bearer  {channelAccessToken}，.retrieve().onStatus(HttpStatusCode::isError,
+      
+     ...) 把非 2xx 轉成 LineApiException，回傳 response header X-Line-Request-Id
+     ────────────────────────────────────────
+     檔案: MessagingService.java
+     責任: 找 user → isOfficialAccountFollowed() 為 false 就丟
+     UserNotFollowingException(lineProps.oaAddFriendUrl())；找不到 user 就丟
+     ResponseStatusException(404)（Spring 原生，不用另寫 handler）
+     ────────────────────────────────────────
+     檔案: MessagingController.java
+     責任: POST /api/messages/push（@Valid），加兩個
+     @ExceptionHandler：UserNotFollowingException → 409、LineApiException → 
+     依上游狀態碼轉 400/502/409/429/502（401 特別轉 502，避免前端誤判為自己的
+     JWT
+     過期）
+
+     刻意不新增 MessagingConfig / 共用 RestClient bean —— 沿用 LineOAuthClient
+     的做法，需要時再抽。
+
+     Files to modify
+
+     - backend/src/main/java/com/poc/lineauth/config/LineProperties.java
+     在 record 尾端加兩個 component：String channelAccessToken 與 String 
+     pushEndpoint。Spring 是按名稱綁定，現有呼叫者不受影響。
+     - backend/src/main/resources/application.yml
+     在既有 line: 區塊加：
+       channel-access-token: ${LINE_CHANNEL_ACCESS_TOKEN}
+       push-endpoint: https://api.line.me/v2/bot/message/push
+     - .env.example
+     LINE_CHANNEL_ACCESS_TOKEN=replace_me_long_lived_channel_access_token
+     - docker-compose.yml（backend.environment: 區塊）
+           LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN}
+
+     Reused pieces
+
+     - com.poc.lineauth.auth.LineOAuthClient — RestClient 呼叫 LINE API 的樣板
+     - com.poc.lineauth.user.UserRepository#findByLineUserId(String) — 直接可用
+     - com.poc.lineauth.user.User#isOfficialAccountFollowed() / getLineUserId()
+     — 已存在
+     - com.poc.lineauth.config.LineProperties#oaAddFriendUrl() — 已存在，409
+     body 直接塞
+     - com.poc.lineauth.auth.JwtAuthFilter + config.SecurityConfig — 已經涵蓋新
+     endpoint，無需改設定
+
+     LINE API contract 摘要
+
+     - POST https://api.line.me/v2/bot/message/push
+     - Header：Authorization: Bearer {long-lived channel access token} +
+     Content-Type: application/json
+     - Body：{"to":"U...", 
+     "messages":[{"type":"text","text":"..."}]}（訊息陣列最多 5 則，本版只送 1
+     則）
+     - 成功：HTTP 200，body {}，重點在 response header
+     X-Line-Request-Id（UUID，寫進我們的 response）
+     - 上游錯誤對應：
+
+     | 上游 | 涵義                                        | 我們回
+         |
+     |------|---------------------------------------------|---------------------
+     -----|
+     | 400  | payload 或 userId 不合法                    | 400
+         |
+     | 401  | channel access token 錯（伺服器端設定問題） | 502（不外洩 401
+     給前端） |
+     | 403  | 對方未加入 OA / 已封鎖 / 方案不允許         | 409
+         |
+     | 429  | 配額或速率上限                              | 429
+         |
+     | 5xx  | LINE 側                                     | 502
+         |
+
+
+     Verification (manual)
+
+     前置：LINE Developers Console → Messaging API 頻道 → 發長期 channel access
+     token，寫進 .env；docker compose up --build backend 重啟。
+
+     1. 拿 JWT：走現有 LINE login 流程登入一個已追蹤 OA 的測試帳號，從
+     localStorage 或 ?token= 抓 JWT，順便 GET /api/me 拿自己的 lineUserId。
+     2. Happy path
+     curl -i -X POST http://localhost:8080/api/messages/push \
+       -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+       -d "{\"lineUserId\":\"$UID\",\"text\":\"hello from POC\"}"
+     2. → 200 {"status":"sent","requestId":"..."}；手機上 LINE 應收到訊息。
+     3. 409 未追蹤：docker compose exec postgres psql -U $POSTGRES_USER -d 
+     $POSTGRES_DB -c "UPDATE users SET official_account_followed=false WHERE 
+     line_user_id='$UID';"，再打一次 curl，應得 409 +
+     oaAddFriendUrl。測完把欄位改回 true。
+     4. 404：lineUserId 給一個不存在的 U000...000 → 404。
+     5. 驗證失敗：text 給空字串 → 400。
+     6. 上游 401：把 .env 的 token 改成亂碼重啟 backend，打 happy path 應回
+     502，backend log 印 LINE Messaging API returned 401 ...。
+     7. 未帶 JWT：不帶 Authorization header → 401（SecurityConfig 已處理）。
+
+     Out of scope（此次不做）
+
+     - 自動測試（POM 目前沒 spring-boot-starter-test，這次不加依賴、不寫 JUnit /
+     WireMock）
+     - multicast / broadcast / narrowcast
+     - 非 text 訊息型別（sticker / image / template / flex）
+     - 重試 / 429 backoff / 配額追蹤
+     - reply token endpoint
+     - follow / unfollow webhook 接收器（可讓 officialAccountFollowed
+     即時同步；目前只有在登入時更新）
+     - 全域 @ControllerAdvice、共用 RestClient bean
+
+⏺ 計畫已通過。開始實作。先看一下 LineProperties.java
+  目前的樣子，其他需要修改的檔案先前已讀過。
+
+  Read 4 files (ctrl+o to expand)
+
+⏺ pom 已有 spring-boot-starter-validation，DTO validation 可直接用。我先建 task
+  list 追進度。
+⏺ Update(backend/src/main/java/com/poc/lineauth/config/LineProperties.java)
+  ⎿  Added 3 lines, removed 1 line
+      13          String friendshipEndpoint,
+      14          String botPrompt,
+      15          String prompt,
+      16 -        String oaAddFriendUrl                                  
+      16 +        String oaAddFriendUrl,                                 
+      17 +        String channelAccessToken,                             
+      18 +        String pushEndpoint                                    
+      19  ) {}
+      20   No newline at end of file
+
+⏺ Update(backend/src/main/resources/application.yml)
+  ⎿  Added 2 lines
+      30    bot-prompt: ${LINE_BOT_PROMPT:normal}
+      31    prompt: ${LINE_PROMPT:consent}
+      32    oa-add-friend-url: ${LINE_OA_ADD_FRIEND_URL:https://line.me/R
+          /ti/p/@901yglmb}
+      33 +  channel-access-token: ${LINE_CHANNEL_ACCESS_TOKEN}           
+      34 +  push-endpoint: https://api.line.me/v2/bot/message/push       
+      35  
+      36  app:
+      37    frontend-url: ${FRONTEND_URL}
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Update(.env.example)
+  ⎿  Added 1 line
+      1  LINE_CHANNEL_ID=2010358183
+      2  LINE_CHANNEL_SECRET=replace_me
+      3  LINE_REDIRECT_URI=http://localhost:8080/api/auth/line/callback
+      4 +LINE_CHANNEL_ACCESS_TOKEN=replace_me_long_lived_channel_access_t
+        +oken                                                            
+      5  FRONTEND_URL=http://localhost:5173
+      6  JWT_SECRET=run_openssl_rand_base64_48
+      7  JWT_EXPIRY_MINUTES=60
+
+⏺ Update(docker-compose.yml)
+  ⎿  Added 1 line
+      26        LINE_CHANNEL_ID: ${LINE_CHANNEL_ID}
+      27        LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET}
+      28        LINE_REDIRECT_URI: ${LINE_REDIRECT_URI}
+      29 +      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN}  
+      30        FRONTEND_URL: ${FRONTEND_URL}
+      31        JWT_SECRET: ${JWT_SECRET}
+      32        JWT_EXPIRY_MINUTES: ${JWT_EXPIRY_MINUTES}
+
+⏺ 現在建 messaging package 下的 DTO 與 exception：
+
+⏺ Write(backend/src/main/java/com/poc/lineauth/messaging/PushMessageRequest.java
+       )  ⎿  Wrote 23 lines to backend/src/main/java/com/poc/lineauth/messaging/Pus
+     hMessageRequest.java
+       1 package com.poc.lineauth.messaging;
+       2 
+       3 import jakarta.validation.constraints.NotBlank;
+       4 import jakarta.validation.constraints.Pattern;
+       5 import jakarta.validation.constraints.Size;
+       6 
+       7 /**
+       8  * 對 {@code POST /api/messages/push} 的請求主體。
+       9  *
+      10  * <ul>
+     … +17 lines (ctrl+o to expand)
+
+⏺ Write(backend/src/main/java/com/poc/lineauth/messaging/PushMessageResponse.jav
+       a)
+  ⎿  Wrote 12 lines to backend/src/main/java/com/poc/lineauth/messaging/Pus
+     hMessageResponse.java
+       1 package com.poc.lineauth.messaging;
+       2 
+       3 /**
+       5  * {@code requestId} 對應 LINE 回傳的 {@code X-Line-Request-Id} 
+         header，
+       6  * 供後續追蹤或支援單據對照使用。
+       7  */
+         d) {
+       9     public static PushMessageResponse sent(String requestId) {
+      10         return new PushMessageResponse("sent", requestId);
+     … +3 lines (ctrl+o to expand)
+
+⏺ Write(backend/src/main/java/com/poc/lineauth/messaging/UserNotFollowingExcepti
+       on.java)
+  ⎿  Wrote 19 lines to backend/src/main/java/com/poc/lineauth/messaging/Use
+     rNotFollowingException.java
+      1 package com.poc.lineauth.messaging;
+      2 
+      3 /**
+      4  * 收件人尚未追蹤本專案綁定的官方帳號，無法收到 push message。
+      5  * 由 {@link MessagingController} 轉換成 HTTP 409，並在回應中附上
+      6  * {@code oaAddFriendUrl} 讓前端可以引導使用者加入好友。
+      7  */
+      8 public class UserNotFollowingException extends RuntimeException {
+      9     private final String oaAddFriendUrl;
+     … +9 lines (ctrl+o to expand)
+
+⏺ Write(backend/src/main/java/com/poc/lineauth/messaging/LineApiException.java)
+  ⎿  Wrote 26 lines to
+     backend/src/main/java/com/poc/lineauth/messaging/LineApiException.java
+       1 package com.poc.lineauth.messaging;
+       2 
+       3 import org.springframework.http.HttpStatusCode;
+       4 
+       5 /**
+       7  * 保留原始狀態碼與 body 供 controller 記 log 並映射成合適的對外
+         狀態碼。
+       8  */
+       9 public class LineApiException extends RuntimeException {
+      10     private final HttpStatusCode status;
+     … +18 lines (ctrl+o to expand)
+
+⏺ Write(backend/src/main/java/com/poc/lineauth/messaging/LineMessagingClient.jav
+       a)
+  ⎿  Wrote 57 lines to backend/src/main/java/com/poc/lineauth/messaging/Lin
+     eMessagingClient.java
+       1 package com.poc.lineauth.messaging;
+       2 
+       3 import com.poc.lineauth.config.LineProperties;
+       4 import org.springframework.http.HttpHeaders;
+       5 import org.springframework.http.HttpStatusCode;
+       6 import org.springframework.http.MediaType;
+       7 import org.springframework.stereotype.Component;
+       8 import org.springframework.web.client.RestClient;
+       9 
+      10 import java.util.List;
+     … +57 lines (ctrl+o to expand)
+
+⏺ Write(backend/src/main/java/com/poc/lineauth/messaging/MessagingService.java)
+  ⎿  Wrote 47 lines to
+     backend/src/main/java/com/poc/lineauth/messaging/MessagingService.java
+       1 package com.poc.lineauth.messaging;
+       2 
+       3 import com.poc.lineauth.config.LineProperties;
+       4 import com.poc.lineauth.user.User;
+       5 import com.poc.lineauth.user.UserRepository;
+       6 import org.springframework.http.HttpStatus;
+       7 import org.springframework.stereotype.Service;
+       8 import org.springframework.web.server.ResponseStatusException;
+       9 
+      10 /**
+     … +45 lines (ctrl+o to expand)
+
+⏺ Write(backend/src/main/java/com/poc/lineauth/messaging/MessagingController.jav
+       a)
+  ⎿  Wrote 73 lines to backend/src/main/java/com/poc/lineauth/messaging/Mes
+     sagingController.java
+       1 package com.poc.lineauth.messaging;
+       2 
+       3 import jakarta.validation.Valid;
+       4 import org.slf4j.Logger;
+       5 import org.slf4j.LoggerFactory;
+       6 import org.springframework.http.HttpStatus;
+       7 import org.springframework.http.ResponseEntity;
+       8 import org.springframework.web.bind.annotation.ExceptionHandler;
+       9 import org.springframework.web.bind.annotation.PostMapping;
+      10 import org.springframework.web.bind.annotation.RequestBody;
+     … +72 lines (ctrl+o to expand)
+
+⏺ 全部檔案就緒，跑 maven 編譯確認沒有語法或型別錯誤：
+
+  Read 1 file, ran 3 shell commands (ctrl+o to expand)
+
+⏺ 本機沒有 mvn 也沒 mvnw。用 docker 內的 maven image 快速編譯驗證：
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Image 已 pull 完但輸出被截斷，重跑一次拿編譯結果：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ 第一次 pull 時已編譯過（BUILD SUCCESS）。做一次 clean compile
+  徹底確認新檔案都通過：
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Clean compile 成功，20 個原始檔全數編譯通過（原有 13 + 新增 7 個 messaging
+  檔案）。
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ 完成。以下是這次改動的總覽：
+
+  實作結果
+
+  新增檔案（backend/src/main/java/com/poc/lineauth/messaging/）
+
+  ┌───────────────────────────────┬─────────────────────────────────────────┐
+  │             檔案              │                  責任                   │
+  ├───────────────────────────────┼─────────────────────────────────────────┤
+  │                               │ Request DTO，含 @NotBlank /             │
+  │ PushMessageRequest.java       │ @Pattern("^U[0-9a-f]{32}$") /           │
+  │                               │ @Size(max=5000)                         │
+  ├───────────────────────────────┼─────────────────────────────────────────┤
+  │ PushMessageResponse.java      │ {status, requestId}，含 sent(requestId) │
+  │                               │  工廠                                   │
+  ├───────────────────────────────┼─────────────────────────────────────────┤
+  │ UserNotFollowingException.jav │ 攜帶 oaAddFriendUrl                     │
+  │ a                             │                                         │
+  ├───────────────────────────────┼─────────────────────────────────────────┤
+  │ LineApiException.java         │ 攜帶上游 HttpStatusCode + body          │
+  ├───────────────────────────────┼─────────────────────────────────────────┤
+  │                               │ POST /v2/bot/message/push，.onStatus(is │
+  │ LineMessagingClient.java      │ Error, ...) 轉 LineApiException，回傳   │
+  │                               │ X-Line-Request-Id                       │
+  ├───────────────────────────────┼─────────────────────────────────────────┤
+  │ MessagingService.java         │ 找 user → 檢查追蹤 → 呼叫 client        │
+  ├───────────────────────────────┼─────────────────────────────────────────┤
+  │ MessagingController.java      │ POST /api/messages/push + 兩個          │
+  │                               │ @ExceptionHandler                       │
+  └───────────────────────────────┴─────────────────────────────────────────┘
+
+  修改檔案
+
+  - LineProperties.java：record 尾端加 channelAccessToken + pushEndpoint
+  - application.yml：line: 區塊加對應兩個 key
+  - .env.example：加 LINE_CHANNEL_ACCESS_TOKEN
+  - docker-compose.yml：backend 服務 propagate 該 env
+
+  編譯驗證：docker maven container clean compile → 20 files → BUILD SUCCESS
+
+  你接下來要做的事
+
+  1. 到 LINE Developers Console → Messaging API 頻道 → 發一個 long-lived channel
+  access token，塞進 .env 的 LINE_CHANNEL_ACCESS_TOKEN=...
+  2. docker compose up --build backend 重啟
+  3. 依照 ~/.claude/plans/line-messaging-api-synthetic-stallman.md
+  的「Verification」章節（步驟 1–7）走一次手動驗證：
+    - 拿 JWT → 打 POST /api/messages/push happy path
+    - 到 psql 手動把 official_account_followed 改 false 測 409
+    - 用不存在的 userId 測 404
+    - 空 text 測 400
+    - 把 token 改壞測上游 401 → 我們回 502
+
+  未實作（out of scope，計畫檔中已列）
+
+  自動測試（POM 沒 spring-boot-starter-test）、multicast/broadcast、非 text
+  型別、重試、reply-token、follow/unfollow webhook、@ControllerAdvice、共用
+  RestClient bean。
+
+✻ Brewed for 25m 13s
+
+❯ curl -i -X POST http://localhost:8080/api/messages/push \  回傳               
+  HTTP/1.1 401                                                                  
+  Vary: Origin                                                                  
+  Vary: Access-Control-Request-Method                                           
+  Vary: Access-Control-Request-Headers                                          
+  X-Content-Type-Options: nosniff                                               
+  X-XSS-Protection: 0                                                           
+  Cache-Control: no-cache, no-store, max-age=0, must-revalidate                 
+  Pragma: no-cache                                                              
+  Expires: 0                                                                    
+  X-Frame-Options: DENY                                                         
+  Content-Length: 0                                                             
+  Date: Mon, 10 Aug 2026 08:03:48 GMT                                           
+                                                                                
+  curl: (6) Could not resolve host:                                             
+  curl: (6) Could not resolve host:                                             
+  curl: (6) Could not resolve host:                                             
+
+⏺ 401 是預期的正確行為 —— 這個 endpoint 落在 SecurityConfig 的
+  anyRequest().authenticated()，你這次呼叫沒帶 Authorization: Bearer 
+  <JWT>，Spring Security 直接擋在 JwtAuthFilter 之前。也就是說安全防線正常運作。
+
+  底下三行 Could not resolve host:  應該是原本的多行 curl（\ 換行）被 shell
+  拆成好幾個獨立指令：第一行 curl ... /push 送出去拿到 401，剩下的 -H "..."、-d 
+  "..." 被當成獨立指令跑，curl 找不到 URL 參數就報 host 空白。
+
+  怎麼真的把訊息送出去
+
+  流程要走完兩段：
+
+  Step 1：先取得 JWT
+
+  瀏覽器打開 http://localhost:5173，走一次 LINE 登入。登入成功後，前端會把 JWT
+  存進 localStorage（或看 /auth/callback?token=... 網址參數）。
+
+  在瀏覽器 devtools console 執行：
+  copy(localStorage.getItem('token'))  // 依前端實際 key 名稱
+
+  或直接看 devtools → Application → Local Storage 抓出來。
+
+  Step 2：把 JWT + 你的 LINE userId 塞到環境變數，再打 push endpoint
+
+  export JWT='<貼上剛拿到的 JWT>'
+  # 順便確認 userId
+  curl -s http://localhost:8080/api/me -H "Authorization: Bearer $JWT" | jq
+
+  /api/me 回應裡的 lineUserId 就是 push 時要的 to。然後：
+
+  export UID='<你的 U....>'
+  curl -i -X POST http://localhost:8080/api/messages/push -H "Authorization: 
+  Bearer $JWT" -H "Content-Type: application/json" -d
+  "{\"lineUserId\":\"$UID\",\"text\":\"hello from POC\"}"
+
+  這行寫成單行，避免剛剛 \ 換行被拆掉的問題。
+
+  幾個常見狀況對照
+
+  ┌──────────────────────────────────┬──────────────────────────────────────┐
+  │              你看到              │                 原因                 │
+  ├──────────────────────────────────┼──────────────────────────────────────┤
+  │ 401 Content-Length:              │ 沒帶 Authorization header，或 JWT    │
+  │ 0（現在這個）                    │ 過期                                 │
+  ├──────────────────────────────────┼──────────────────────────────────────┤
+  │ 400 + validation 訊息            │ lineUserId 格式不對（不是 U + 32     │
+  │                                  │ hex）或 text 空字串                  │
+  ├──────────────────────────────────┼──────────────────────────────────────┤
+  │ 404 User not found for           │ 資料庫裡沒有這個使用者（沒登入過本系 │
+  │ lineUserId                       │ 統）                                 │
+  ├──────────────────────────────────┼──────────────────────────────────────┤
+  │ 409 oa_not_followed              │ User 存在但                          │
+  │                                  │ official_account_followed=false      │
+  ├──────────────────────────────────┼──────────────────────────────────────┤
+  │ 502 line_api_error +             │ .env 的 LINE_CHANNEL_ACCESS_TOKEN    │
+  │ upstreamStatus:401               │ 設錯                                 │
+  ├──────────────────────────────────┼──────────────────────────────────────┤
+  │ 200 {"status":"sent","requestId" │ 成功；手機上 LINE 秒收到             │
+  │ :"..."}                          │                                      │
+  └──────────────────────────────────┴──────────────────────────────────────┘
+
+  順道確認一下：你剛剛開了 .env —— 有把 LINE_CHANNEL_ACCESS_TOKEN=... 填成 LINE
+  Developers Console → Messaging API 頻道發出的長期 channel access token
+  嗎？填完後要 docker compose up -d --build backend 才會生效（.env
+  是啟動時載入的）。
+
+✻ Sautéed for 45s
+
+❯ curl -i -X POST http://localhost:8080/api/messages/push \                     
+                                                                     ✔        
+  15:59:26                                                                     
+    -H "Authorization: Bearer eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxIiwibGluZVVzZXJJ 
+  ZCI6IlVhMWYzNGM3ZmQ3MzNlODhhYmRhZjBkZDI3OTQxYjZiMCIsImRpc3BsYXlOYW1lIjoiWm9lI 
+  iwiaWF0IjoxNzg2MzQ1MDg0LCJleHAiOjE3ODYzNDg2ODR9.1v2nQwceoEkusUBHpqVt1gN5-XUY2 
+  hfaW7Hj8rtEUGrboJyeZTc4MdWlOkmCzC5FH6DllDvIcUOFD4PLWuD-mg" \                  
+    -H "Content-Type: application/json" \                                       
+    -d '{"lineUserId":"Ua1f34c7fd733e88abdaf0dd27941b6b0","text":"hello from    
+  POC"}'                                                                        
+  HTTP/1.1 401                                                                  
+  Vary: Origin                                                                  
+  Vary: Access-Control-Request-Method                                           
+  Vary: Access-Control-Request-Headers                                          
+  X-Content-Type-Options: nosniff                                               
+  X-XSS-Protection: 0                                                           
+  Cache-Control: no-cache, no-store, max-age=0, must-revalidate                 
+  Pragma: no-cache                                                              
+  Expires: 0                                                                    
+  X-Frame-Options: DENY                                                         
+  Content-Length: 0                                                             
+  Date: Mon, 10 Aug 2026 08:03:48 GMT                                           
+                                                                                
+  curl: (6) Could not resolve host:                                             
+  curl: (6) Could not resolve host:                                             
+  curl: (6) Could not resolve host:  我有帶                                     
+
+⏺ 眼尖看兩個線索：
+
+  1. 你貼的第一行 curl -i -X POST http://localhost:8080/api/messages/push \
+  後面接著 shell 提示字元 ✔ 15:59:26 —— 這代表你的 shell
+  把第一行當獨立指令執行完就顯示了 prompt，\ 的多行接續其實沒生效
+  2. 底下的 3 行 Could not resolve host: 正好對應剩下的 -H、-H、-d
+  三行被當成獨立指令跑（每行都是 curl <flags> 但沒有 URL）
+
+  所以雖然你「看得到」JWT 在指令裡，實際上送到 backend 的請求根本沒帶 
+  Authorization header，Spring Security 因此回 401。
+
+  修法：一行不換行
+
+  把整段壓成一行、不要有 \。像這樣：
+
+  curl -i -X POST http://localhost:8080/api/messages/push -H "Authorization: 
+  Bearer eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxIiwibGluZVVzZXJJZCI6IlVhMWYzNGM3ZmQ3Mz
+  NlODhhYmRhZjBkZDI3OTQxYjZiMCIsImRpc3BsYXlOYW1lIjoiWm9lIiwiaWF0IjoxNzg2MzQ1MDg0
+  LCJleHAiOjE3ODYzNDg2ODR9.1v2nQwceoEkusUBHpqVt1gN5-XUY2hfaW7Hj8rtEUGrboJyeZTc4M
+  dWlOkmCzC5FH6DllDvIcUOFD4PLWuD-mg" -H "Content-Type: application/json" -d
+  '{"lineUserId":"Ua1f34c7fd733e88abdaf0dd27941b6b0","text":"hello from POC"}'
+
+  或用環境變數版（比較好維護）
+
+  export JWT='eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxIiwibGluZVVzZXJJZCI6IlVhMWYzNGM3Z
+  mQ3MzNlODhhYmRhZjBkZDI3OTQxYjZiMCIsImRpc3BsYXlOYW1lIjoiWm9lIiwiaWF0IjoxNzg2MzQ
+  1MDg0LCJleHAiOjE3ODYzNDg2ODR9.1v2nQwceoEkusUBHpqVt1gN5-XUY2hfaW7Hj8rtEUGrboJye
+  ZTc4MdWlOkmCzC5FH6DllDvIcUOFD4PLWuD-mg'
+  export UID='Ua1f34c7fd733e88abdaf0dd27941b6b0'
+
+  然後：
+
+  curl -i -X POST http://localhost:8080/api/messages/push -H "Authorization: 
+  Bearer $JWT" -H "Content-Type: application/json" -d
+  "{\"lineUserId\":\"$UID\",\"text\":\"hello from POC\"}"
+
+  順帶先驗證 JWT 本身是通的
+
+  在打 push 之前先確認 JWT 沒過期、JwtAuthFilter 認得：
+
+  curl -i http://localhost:8080/api/me -H "Authorization: Bearer $JWT"
+
+  - 拿到 200 {...} → JWT OK，接下來去打 push
+  - 拿到 401 → JWT 過期或壞了，回瀏覽器重新登入拿新的（你 JWT 的 exp 是 60
+  分鐘）
+
+  為什麼會被拆行
+
+  你用的 shell（看提示字元像 starship / powerlevel10k）啟用了 bracketed 
+  paste，但貼上時第一行的 \  後面多了空白才換行，這會讓 \
+  失去接續功能。改用單行、或用 heredoc、或存成 .sh 檔 bash push.sh
+  都能繞開這個坑。
+
+✻ Cogitated for 54s
+
+❯ 3. 409 未追蹤：docker compose exec postgres psql -U $POSTGRES_USER -d         
+  $POSTGRES_DB -c "UPDATE users SET official_account_followed=false WHERE       
+  line_user_id='$UID';"，再打一次 curl，應得 409 +                              
+  oaAddFriendUrl。測完把欄位改回                                                
+       true。   看不懂講白一點                                                  
+
+⏺ 好，把那步驟白話拆開講。
+
+  這一步在幹嘛
+
+  我們要驗證程式碼裡這段防線是否運作：
+
+  ▎ 「如果 DB 裡這個使用者的 
+  ▎ official_account_followed=false（沒追蹤官方帳號），就不要真的打 LINE，直接回
+  ▎ 409 並附上加好友連結。」
+
+  問題是：你自己這個帳號已經追蹤官方帳號了（DB 裡 official_account_followed=true
+  ），走正常流程永遠測不到這條分支。所以我們手動作弊，去 DB 把這個欄位改成
+  false，再打一次 API，看看是不是真的回 409。測完再改回 true 免得後續影響。
+
+  三個具體步驟
+
+  Step A：偷偷把「已追蹤」改成「沒追蹤」
+
+  打開一個新 terminal 貼這行（Ua1f...b6b0 就是你自己的 lineUserId）：
+
+  docker compose exec postgres psql -U poc -d lineauth -c "UPDATE users SET 
+  official_account_followed=false WHERE 
+  line_user_id='Ua1f34c7fd733e88abdaf0dd27941b6b0';"
+
+  拆解：
+  - docker compose exec postgres = 「進到 postgres 這個容器裡執行指令」
+  - psql -U poc -d lineauth = 用 poc 這個 DB 使用者連到 lineauth
+  資料庫（這兩個值就是 .env 裡的 POSTGRES_USER 和 POSTGRES_DB）
+  - -c "UPDATE ..." = 執行這一句 SQL，把該筆使用者的 official_account_followed
+  改成 false
+
+  執行成功會印一行 UPDATE 1。
+
+  Step B：再打一次 push API
+
+  用你剛剛能成功發訊息的那條 curl 再打一次：
+
+  curl -i -X POST http://localhost:8080/api/messages/push -H "Authorization: 
+  Bearer $JWT" -H "Content-Type: application/json" -d
+  "{\"lineUserId\":\"$UID\",\"text\":\"hello from POC\"}"
+
+  預期看到：
+
+  HTTP/1.1 409
+  Content-Type: application/json
+  ...
+
+  {"error":"oa_not_followed","message":"User must add the official account as a
+  friend first","oaAddFriendUrl":"https://line.me/R/ti/p/@901yglmb"}
+
+  如果真的看到 409 加上 oaAddFriendUrl，恭喜，這條防線正確運作 —— 前端拿到 409
+  之後就可以用這個 URL 引導使用者去加官方帳號。
+
+  Step C：把資料改回原狀（很重要）
+
+  不然接下來所有測試都會一直卡 409：
+
+  docker compose exec postgres psql -U poc -d lineauth -c "UPDATE users SET 
+  official_account_followed=true WHERE 
+  line_user_id='Ua1f34c7fd733e88abdaf0dd27941b6b0';"
+
+  一樣看到 UPDATE 1 就成功。
+
+  一句話總結
+
+  「造假 → 打一次 → 看到 409 → 還原」，全部就這樣。
+
+✻ Sautéed for 42s
+
+❯ 我要怎麼查看 db                                                               
+
+⏺ 有三種方式，從最容易到最原始，看你習慣哪一種。
+
+  方式一：IntelliJ IDEA 內建的 Database 工具（最推薦）
+
+  你已經在用 IntelliJ，直接內建就有 Database 面板，不用另外裝軟體。
+
+  步驟：
+
+  1. 右邊側欄找 Database tab（沒看到就 View → Tool Windows → Database，或 ⌘ + 
+  Shift + A 搜 "Database"）
+  2. 點 + → Data Source → PostgreSQL
+  3. 填連線資訊（值都在你的 .env 裡）：
+
+  | 欄位     | 值        |
+  |----------|-----------|
+  | Host     | localhost |
+  | Port     | 5432      |
+  | Database | lineauth  |
+  | User     | poc       |
+  | Password | poc       |
+
+  4. 底下若跳「Download driver」點下去等它裝好
+  5. 按 Test Connection → 綠勾就 OK
+  6. 按 OK
+
+  之後就能：
+  - 展開 lineauth → public → users 表 → 右鍵 Edit Data
+  直接看資料、甚至用表格介面改欄位（改完 ⌘ + Enter 送出，等於在 GUI 裡跑
+  UPDATE）
+  - 右鍵資料表 → New → Query Console 開一個 SQL 編輯器，可以打 SELECT * FROM 
+  users; 等等
+
+  要改「未追蹤」測 409 那步的話：在 users 表按 Edit
+  Data，找到你那筆，official_account_followed 欄位打勾/取消，按 ⌘ + Enter
+  送出，比打指令快很多。
+
+  方式二：命令列 psql（適合快速查一下）
+
+  不用連進容器，直接從你的 mac 連（因為 docker-compose.yml 有把 5432
+  對外開放）。如果本機有 psql：
+
+  PGPASSWORD=poc psql -h localhost -U poc -d lineauth
+
+  如果沒有 psql，就進到容器裡：
+
+  docker compose exec postgres psql -U poc -d lineauth
+
+  進去之後常用指令：
+
+  \dt              -- 列出所有 table
+  \d users         -- 看 users 表的欄位結構
+  SELECT * FROM users;
+  SELECT line_user_id, display_name, official_account_followed FROM users;
+  \q               -- 離開
+
+  想單次跑一句 SQL 不進互動介面：
+
+  docker compose exec postgres psql -U poc -d lineauth -c "SELECT id, 
+  line_user_id, display_name, official_account_followed FROM users;"
+
+  方式三：桌面 GUI（TablePlus / DBeaver / pgAdmin 之類）
+
+  如果你已經有裝，連線資訊跟方式一的表格完全一樣（localhost:5432, lineauth,
+  poc/poc）。沒裝的話就跳過，方式一已經夠用。
+
+  ---
+  推薦你怎麼開始
+
+  1. 先用方式一在 IntelliJ 裡建好連線 —— 一次設定終身受用
+  2. 打開 users 表看一下目前資料長什麼樣
+  3. 之後測 409 分支就直接在 IntelliJ 表格介面點欄位改 false，測完再改回
+  true，比 psql 快也不容易打錯
+
+✻ Brewed for 31s
+
+❯  展開 lineauth → public → users 表 → 右鍵 Edit Data                           
+  直接看資料、甚至用表格介面改欄位（改完 ⌘ + Enter 送出，等於在 GUI 裡跑        
+  UPDATE）                                                                      
+  右鍵  Edit Data  顯示要是 Uiltimate 版本,，我是教育版本查看了 help 有         
+  ultimate 字眼,，但我看不到資料                                                
+
+⏺ IDEA 教育版 / Community 版不含 Database Tools，看到 Ultimate
+  字眼就是這個原因。不用糾結，有幾個更快的路。
+
+  最快：直接用 psql，不需要 GUI
+
+  其實測 409 那步完全不用 GUI，一句話就能看資料：
+
+  docker compose exec postgres psql -U poc -d lineauth -c "SELECT id, 
+  line_user_id, display_name, official_account_followed FROM users;"
+
+  輸出會是這樣：
+
+   id |            line_user_id             | display_name |
+  official_account_followed
+  ----+-------------------------------------+--------------+--------------------
+  -------
+    1 | Ua1f34c7fd733e88abdaf0dd27941b6b0   | Zoe          | t
+  (1 row)
+
+  t 就是 true，f 就是 false。之後只要跑 UPDATE 就能翻牌，SELECT
+  一次驗證，兩個指令來回就搞定。
+
+  想進互動模式一直打 SQL：
+
+  docker compose exec postgres psql -U poc -d lineauth
+
+  進去後：\dt 看有哪些表、\d users 看欄位、SELECT ...;、\q 離開。
+
+  想要 GUI：DBeaver Community（免費、開源）
+
+  DBeaver Community 版功能跟 DataGrip 幾乎一樣，重點是免費而且 Edit Data 
+  完全能用。
+
+  brew install --cask dbeaver-community
+
+  裝好後：
+  1. 開 DBeaver → 左上 + → PostgreSQL
+  2. Host localhost、Port 5432、Database lineauth、Username poc、Password poc
+  3. 底下若跳「Download driver」點下去等它裝
+  4. 連上後左邊展開 lineauth → Schemas → public → Tables → users
+  5. 雙擊 users → 上方切到 Data 分頁 →
+  直接看到資料，也可以點格子改再按存檔（快捷鍵 ⌘ + S）送出
+
+  你已經開了 console.sql，可以先試試
+
+  你貼的檔案路徑 .../consoles/db/.../console.sql 是 IntelliJ 資料庫 console
+  的暫存檔，代表 Database plugin 至少有部分載入。試試看：在那個檔案裡打 SELECT *
+  FROM users; 然後按 ⌘ + Enter。
+
+  - 如果跑得出來結果 → 那你查資料完全沒問題，只是 Edit Data 表格編輯 那個 UI
+  需要 Ultimate 而已。改資料就退回去用 UPDATE users SET ... WHERE ...; 這種 SQL
+  語法（也是打在同個 .sql 檔按 ⌘ + Enter 送出）
+  - 如果跑不出來、或右下角要你買 Ultimate → 就跳去用 DBeaver
+
+  順帶一提
+
+  如果你是在學學生，可以到 https://www.jetbrains.com/community/education/ 用學校
+  email 申請免費 Ultimate 授權，一次就把 Database Tools
+  打開，之後每年續約。你既然用教育版，多半符合資格。
+
+  ---
+  我的建議路線：
+
+  1. 現在測 409 → 用最上面那條 psql 一行指令，最省事
+  2. 之後想長期有 GUI → 裝 DBeaver Community（3 分鐘搞定）
+  3. 之後想升級 Ultimate → 有學生身份就申請教育授權
+
+✻ Cooked for 52s
+
+❯ 在資料庫將 official_account_followed 改成 false                               
+  登出再登入時,，為什麼是否加入官方帳號的 toogle 仍然預設是 on?                 
+
+⏺ 好問題 —— 我先讀一下實際程式碼確認流程，再解釋為什麼。
+
+  Read 2 files (ctrl+o to expand)
+
+⏺ 看到了，這個行為是故意的。關鍵在 AuthController.java:95-96：
+
+  boolean isFriend = lineClient.isFriend(token.accessToken());   // 打 LINE 
+  問即時狀態
+  User user = userService.upsertFromLineProfile(profile, isFriend);  // 覆寫 DB
+
+  每次登入 callback 都會再問一次 LINE 的 
+  friendship/v1/status，拿到當下的真實好友狀態，然後 UserService.java:22 的
+  existing.setOfficialAccountFollowed(officialAccountFollowed); 直接把你手動改的
+  false 覆蓋回真實值（true）。
+
+  也就是：LINE 才是真相來源，DB 只是快取。 只要你 LINE app
+  裡真的還在追蹤這個官方帳號，登入就一定會把 DB 拉回 true。
+
+  流程長這樣：
+
+  mermaid
+  sequenceDiagram
+      autonumber
+      participant You as 你 (browser)
+      participant BE as backend
+      participant LINE as LINE Platform
+      participant DB as PostgreSQL
+
+      Note over DB: 目前 official_account_followed = false<br/>(你手動改的)
+
+      You->>BE: GET /api/auth/line/authorize
+      BE-->>You: 302 -> LINE login page
+      You->>LINE: 授權
+      LINE-->>You: 302 -> /callback?code=...
+      You->>BE: GET /api/auth/line/callback?code=...
+      BE->>LINE: POST /oauth2/v2.1/token (交換 access token)
+      LINE-->>BE: access_token
+      BE->>LINE: GET /v2/profile
+      LINE-->>BE: profile
+      BE->>LINE: GET /friendship/v1/status
+      Note right of LINE: LINE
+  回真實狀態<br/>friendFlag=true<br/>(因為你手機上真的還追蹤)
+      LINE-->>BE: {"friendFlag": true}
+      BE->>DB: UPDATE users SET official_account_followed=true
+      Note over DB: 你剛剛設的 false 被覆蓋回 true
+      BE-->>You: 302 -> /auth/callback?token=<jwt>
+      You->>BE: GET /api/me (帶 JWT)
+      BE-->>You: {..., officialAccountFollowed: true}
+      Note over You: 前端 toggle 顯示 on
+
+⏺ Skill(mermaid-diagram)
+  ⎿  Successfully loaded skill
+
+  Made 1 scratchpad edit +28, read 1 file, ran 1 shell command (ctrl+o to expand)
+
+⏺ 為什麼設計成這樣
+
+  - LINE 
+  是事實真相：使用者手機上的追蹤狀態隨時可能變（封鎖、解除、重新加），backend
+  沒有其他管道知道，只有登入時能問一次
+  - DB 只是快取：因為每次 push 都去問 LINE 太慢也浪費 API 額度，所以登入時
+  snapshot 一份存 DB，之後 MessagingService 直接讀
+  - 副作用：中間如果使用者解除追蹤了，backend 不知道 → push 出去會被 LINE 打回
+  403 → 這時 LineApiException handler 會再幫你轉成
+  409（這就是計畫裡「第二道防線」的意思）
+
+  想解決「不重登也能即時感知」只有一個正解：接 LINE 的 follow/unfollow 
+  webhook，這已經在計畫的 out-of-scope 裡列出來當未來加分項。
+
+  那要怎麼測 409 分支才不會被覆蓋掉
+
+  有三個做法，看你要驗證到哪一層：
+
+  做法 1：不要登出重登（最快）
+
+  用你現在手上還有效的 JWT（60 分鐘內），流程：
+
+  psql UPDATE ... =false   →   curl /api/messages/push   →   看到 409
+
+  DB 改完到你打 API 中間沒有登入行為，所以覆蓋不會發生。這是驗證後端
+  MessagingService 那段 if (!user.isOfficialAccountFollowed()) 的最快方法。
+
+  做法 2：真的去 LINE app 解除追蹤這個 OA
+
+  打開手機 LINE → 找你這個測試官方帳號 → 點右上齒輪 → 封鎖 或
+  刪除聊天。然後回瀏覽器登出重登。
+
+  這次 callback 打 friendship/v1/status 會拿到
+  friendFlag=false（真實狀態就是沒追蹤），DB 才會被寫成 false，登入後打 push
+  就會 409。
+
+  測完記得回去把 OA 加回好友，不然下次登入還是 false。
+
+  做法 3：測第二道防線（LINE 端擋、我們轉 409）
+
+  DB 是 true 但實際上沒追蹤 → push 會走到 LINE → LINE 回 403 → 我們的
+  LineApiException handler 轉成 409。方法：做法 2 的第一步（LINE
+  上封鎖），但不要重新登入，直接用舊 JWT 打 push。這樣 DB 還是 true
+  過關第一關，第二關被 LINE 擋下。
+
+  ---
+  前端 toggle 的顯示邏輯
+
+  順帶提一下：/api/me line 116 回的 officialAccountFollowed 就是 DB
+  那個欄位。前端 toggle 讀這個值決定 on/off，所以只要 DB 是 true，toggle 一定
+  on。前端沒有其他即時查 LINE 的路徑。
+✻ Sautéed for 2m 7s
+
+❯ 如果真的看到 409 加上 oaAddFriendUrl，恭喜，這條防線正確運作 —— 前端拿到 409  
+  之後就可以用這個 URL 引導使用者去加官方帳號。                                 
+  以上這種應對方式前端引導使用者加入好友,，適合用在什麼情景                     
+
+⏺ 這個問題問到重點 —— 「409 +
+  引導加好友」這種模式只在特定使用者情境下才有意義。拆給你看：
+
+  最適合：使用者本人當下在操作、對象就是他自己
+
+  共通條件：
+  1. 呼叫 API 的人 = 收件人本人（或同一個 session 裡的第三人看得到、可以立刻點）
+  2. 使用者現在活著 / 在網頁上 / 是主動觸發（可以馬上被引導）
+  3. 使用者是否要收 LINE 通知由他自己決定
+
+  典型場景：
+
+  ┌────────────────────────┬────────────────────────────────────────────────┐
+  │          場景          │                   為什麼合適                   │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ 電商「開啟 LINE        │ 使用者主動點 → 我們 push 歡迎訊息 → 沒加 OA    │
+  │ 訂單通知」按鈕         │ 就跳「請先加入好友接收通知」+ 按鈕             │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ 銀行 App「LINE         │ 開啟 toggle 時試送測試訊息，失敗就導加好友     │
+  │ 交易提醒」設定頁       │                                                │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ 課程平台「LINE         │ 首次開通 push 一則確認訊息，沒加就引導         │
+  │ 上課提醒」開通         │                                                │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ 註冊完成的 welcome     │ 註冊完立刻送，收不到 →                         │
+  │ message                │ 引導加好友，反正使用者還在畫面上               │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ 使用者按「重新發送 OTP │ 當下按當下發，失敗當下引導                     │
+  │  到 LINE」             │                                                │
+  ├────────────────────────┼────────────────────────────────────────────────┤
+  │ 客服對話從 web 轉 LINE │ 使用者主動選「後續用 LINE 聯絡我」，沒加 OA    │
+  │  續聊                  │ 就導                                           │
+  └────────────────────────┴────────────────────────────────────────────────┘
+
+  共同 pattern：使用者「按下按鈕」 → 我們「試 push」 → 沒加就在同一畫面顯示「先
+  加好友，加完再按一次」。使用者的動作連貫、心理預期清楚。
+
+  不適合：使用者不在現場 / 對象非本人
+
+  ┌──────────────────────────────────┬──────────────────────────────────────┐
+  │               情境               │             為什麼不適合             │
+  ├──────────────────────────────────┼──────────────────────────────────────┤
+  │                                  │ 管理者按下「發送給 100 人」，20 個人 │
+  │ 管理者批次推播（你這個 POC 目前  │  409 —— 管理者不能替使用者按好友邀請 │
+  │ API 的長相就是）                 │ ，oaAddFriendUrl 塞到 admin          │
+  │                                  │ 面板意義不大                         │
+  ├──────────────────────────────────┼──────────────────────────────────────┤
+  │ 系統自動排程通知（例如每天早上 8 │ 沒有使用者在場，沒有 UI              │
+  │  點推股價）                      │ 可以引導，只能靜靜記 log             │
+  ├──────────────────────────────────┼──────────────────────────────────────┤
+  │ 關鍵通知（付款成功、密碼變更、風 │ 這種通知不能依賴 LINE                │
+  │ 險警告）                         │ 送達，本來就該有 email/簡訊          │
+  │                                  │ fallback；LINE 只是加分渠道          │
+  ├──────────────────────────────────┼──────────────────────────────────────┤
+  │                                  │ A 無法替 B 加好友，oaAddFriendUrl 給 │
+  │ 對第三人推送（A 打指令送給 B）   │  A 也沒用，要嘛 A 自己去告訴         │
+  │                                  │ B、要嘛用 email 通知 B               │
+  ├──────────────────────────────────┼──────────────────────────────────────┤
+  │ 背景 worker 觸發（webhook /      │ 沒有 UI 可引導，409 只能寫進         │
+  │ message queue consumer）         │ dead-letter queue 之後補寄或人工處理 │
+  └──────────────────────────────────┴──────────────────────────────────────┘
+
+  挑選流程
+
+  mermaid
+  flowchart TD
+      A[要 push 訊息] --> B{呼叫 API 的<br/>使用者，就是<br/>收件人本人嗎?}
+      B -- 是 --> C{使用者現在<br/>在畫面上 /<br/>主動觸發嗎?}
+      B -- 否 --> D[409 + oaAddFriendUrl<br/>意義不大]
+      C -- 是 --> E[✅ 適合<br/>前端引導加好友]
+      C -- 否 --> F{這則訊息<br/>是關鍵通知<br/>還是加分項?}
+      D --> G[改用其他 fallback:<br/>email / SMS / in-app]
+      F -- 加分項 --> H[記 log 靜靜跳過<br/>下次使用者上線時再引導]
+      F -- 關鍵通知 --> G
+
+  Made 1 scratchpad edit +10, read 1 file, ran 1 shell command (ctrl+o to expand)
+
+⏺ Task 清單目前是先前實作那 8 個 task，全部
+  completed；現在的問答不是多步實作工作，沒必要新增 task。清單狀態乾淨，不動它。
+
+  補一個小結把上一則問答收尾回到你這個 POC：
+
+  對照你目前的 API 設計
+
+  你這個 POC 的 endpoint 長這樣：
+
+  POST /api/messages/push
+  { "lineUserId": "<任意 U....>", "text": "..." }
+
+  呼叫者（帶 JWT 的登入者）跟收件人不一定是同一個人。這代表未來要接前端 UI
+  時，會分成兩種角色，對 409 的處理不一樣：
+
+  前端 UI 情境: 使用者按「開啟 LINE 通知」（lineUserId 是自己）
+  收到 409 該做什麼: 直接彈跳窗 + 「加入好友」按鈕（用
+  oaAddFriendUrl），加完再讓他按一次原本的按鈕
+  ────────────────────────────────────────
+  前端 UI 情境: 管理者後台「發送給指定使用者」（lineUserId 是別人）
+  收到 409 該做什麼: 只需要在表格顯示「未加好友，無法送達」+
+  或許附上一個「複製邀請連結，寄 email 給對方」的小工具，oaAddFriendUrl
+  對管理者沒直接用處
+
+  所以 API 回 409 + oaAddFriendUrl 是通用資訊，但要不要把它塞成前端引導 
+  UI，是前端根據當下畫面上下文自己決定的，backend
+  只負責把資料備好。這也是為什麼計畫裡把它做成純資料回應而不強制某種行為 ——
+  保留彈性。
+
+  你之後真的要做前端 UI
+  時，只要問自己一個問題：這個畫面上的使用者本人，能否透過點一下就完成加好友？
+  能就用引導模式，不能就退回顯示訊息或 fallback。
+
+✻ Baked for 1m 49s
+
+❯ 4. 404：lineUserId 給一個不存在的 U000...000 → 404。我將 lineUserId          
+  隨便更改回傳                                                                  
+  curl -i -X POST http://localhost:8080/api/messages/push -H "Authorization:    
+  Bearer eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxIiwibGluZVVzZXJJZCI6IlVhMWYzNGM3ZmQ3M 
+  zNlODhhYmRhZjBkZDI3OTQxYjZiMCIsImRpc3BsYXlOYW1lIjoiWm9lIiwiaWF0IjoxNzg2MzcyMT 
+  gwLCJleHAiOjE3ODYzNzU3ODB9.XeqTPzDAMTcmGMnj_WLv2OW-9COiOPsa4GNkfntq64V4rolCq_ 
+  0JfY1Ev62EuVAa7ixE7v1ZrGpA-OSMziblng" -H "Content-Type: application/json" -d  
+  '{"lineUserId":"Aa1f34c7fd733e88abdaf0dd27941b6b0","text":"再 30              
+  分鐘後會流團"}'                                                               
+  HTTP/1.1 401                                                                  
+  Vary: Origin                                                                  
+  Vary: Access-Control-Request-Method                                           
+  Vary: Access-Control-Request-Headers                                          
+  X-Content-Type-Options: nosniff                                               
+  X-XSS-Protection: 0                                                           
+  Cache-Control: no-cache, no-store, max-age=0, must-revalidate                 
+  Pragma: no-cache                                                              
+  Expires: 0                                                                    
+  X-Frame-Options: DENY                                                         
+  Content-Length: 0                                                             
+  Date: Mon, 10 Aug 2026 15:33:12 GMT                                           
+
+⏺ 慢著 —— 401 Content-Length: 0 表示 Spring Security 的 JwtAuthFilter
+  沒把你當成已登入，直接被安全過濾器擋在 controller 之前，根本沒走到 404 
+  判斷那步。所以現在的問題不是「404 邏輯壞了」，而是這張 JWT 認證失敗。
+
+  先把數字對一下：
+
+  ┌───────────────┬─────────────────────┐
+  │     項目      │      UTC 時間       │
+  ├───────────────┼─────────────────────┤
+  │ JWT iat       │ 2026-08-10 15:29:40 │
+  ├───────────────┼─────────────────────┤
+  │ JWT exp       │ 2026-08-10 16:29:40 │
+  ├───────────────┼─────────────────────┤
+  │ Response Date │ 2026-08-10 15:33:12 │
+  └───────────────┴─────────────────────┘
+
+  JWT 距離過期還有 ~56
+  分鐘，時間對得上，理論上應該過。但實際被擋，多半是簽章驗證失敗。
+
+  先做一個隔離測試
+
+  用同一張 JWT 打 /api/me（是 GET，不用帶 body，最單純）：
+
+  curl -i http://localhost:8080/api/me -H "Authorization: Bearer 
+  eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxIiwibGluZVVzZXJJZCI6IlVhMWYzNGM3ZmQ3MzNlODhhY
+  mRhZjBkZDI3OTQxYjZiMCIsImRpc3BsYXlOYW1lIjoiWm9lIiwiaWF0IjoxNzg2MzcyMTgwLCJleHA
+  iOjE3ODYzNzU3ODB9.XeqTPzDAMTcmGMnj_WLv2OW-9COiOPsa4GNkfntq64V4rolCq_0JfY1Ev62E
+  uVAa7ixE7v1ZrGpA-OSMziblng"
+
+  兩種可能結果：
+
+  A. /api/me 也回 401（大機率）
+
+  代表 JWT 本身就無效，跟 /messages/push 完全無關。原因通常是：
+
+  1. backend 被重啟且 .env 的 JWT_SECRET 換了：舊 JWT 沒法用 —— 必須重新登入拿新
+  JWT
+  2. 你手上有多次登入，JWT 混到了舊的：清瀏覽器 localStorage 或 devtools 看清楚
+  token 值
+  3. backend 內部驗證邏輯出錯：這時要看容器 log
+
+  驗證做法：
+  # 直接看 backend log 有沒有 JWT 相關錯誤
+  docker compose logs backend --tail 50
+
+  如果 log 印出 SignatureException / ExpiredJwtException /
+  MalformedJwtException，就是 JWT 本身壞了。
+
+  修復做法：
+  # 完全重新登入
+  # 1. 瀏覽器打開 http://localhost:5173
+  # 2. 登出（清 localStorage）
+  # 3. 重新 LINE 登入
+  # 4. 抓瀏覽器 localStorage 裡的新 JWT
+  # 5. 換到新 JWT 再打 curl
+
+  B. /api/me 回 200
+
+  代表 JWT 沒問題、能過安全過濾器，那 /messages/push 也不可能
+  401。這種情況會很怪，如果真的發生請把兩個 curl 的完整輸出貼出來，我再看。
+
+  為什麼會懷疑「backend 被重啟導致 JWT_SECRET 變了」
+
+  看你 .env：
+
+  JWT_SECRET=run_openssl_rand_base64_48
+
+  .env.example 裡預設值就是這個字串（提示你要跑 openssl rand -base64 48
+  產生一個），但如果你沒改 .env 而是直接沿用這個字串，那 secret
+  是穩定的、重啟不會變。
+
+  但如果你在測試過程中：
+  - 改了 .env 的 JWT_SECRET → 舊 JWT 全部失效
+  - docker compose up --build backend 重啟 → 讀新 secret → 你手上的舊 JWT
+  沒法通過
+
+  這是最常見的坑。
+
+  順帶提醒 404 分支的正確測法
+
+  等你確認 JWT 是有效的以後，再打你剛剛那個 payload（Aa1f... 開頭）：
+
+  curl -i -X POST http://localhost:8080/api/messages/push -H "Authorization: 
+  Bearer <新 JWT>" -H "Content-Type: application/json" -d
+  '{"lineUserId":"Aa1f34c7fd733e88abdaf0dd27941b6b0","text":"test"}'
+
+  應該會回 400，不是 404。因為你的 DTO 有這條驗證：
+
+  @Pattern(regexp = "^U[0-9a-f]{32}$", message = "lineUserId must match LINE 
+  user id format")
+
+  Aa1f... 開頭是 A 不是 U，會被 @Valid 擋下來直接回 400 Bad Request。
+
+  要真的測到 404，lineUserId 必須是格式合法但 DB 裡不存在的，例如：
+
+  -d '{"lineUserId":"U00000000000000000000000000000000","text":"test"}'
+
+  （U + 32 個 0，全部符合 [0-9a-f] 且開頭 U）
+
+  建議順序
+
+  1. 先跑 /api/me 驗證 JWT
+  2. 如果 JWT 壞了 → 重新登入
+  3. JWT 通了之後，用格式合法但不存在的 userId 測 404
+  4. 順便測格式不合法的 userId 應該回 400（驗證 DTO 那條 regex）
+
+✻ Cogitated for 1m 45s
+
+❯ lineUserId 的格式規則是什麼,，去查看官網                                      
+
+⏺ Web Search("LINE Messaging API userId format specification
+            developers.line.biz")
+  ⎿  Did 1 search in 7s
+
+⏺ Fetch(https://developers.line.biz/en/docs/messaging-api/getting-user-ids/)
+  ⎿  Received 68.4KB (200 OK)
+
+⏺ 查到了。LINE 官方文件明確給了 regex 規格：
+
+  LINE userId 官方格式
+
+  ▎ "The LINE Platform issues a user ID as a string, formatted as U[0-9a-f]{32} 
+  ▎ (regular expression)."
+  ▎
+  ▎ — Get user IDs | LINE Developers
+
+  拆解：
+
+  ┌────────────┬────────────────────────────────────────────────────────────┐
+  │    位置    │                            規則                            │
+  ├────────────┼────────────────────────────────────────────────────────────┤
+  │ 第 1 字    │ 大寫 U（固定，不能是 A、u 或別的）                         │
+  ├────────────┼────────────────────────────────────────────────────────────┤
+  │ 第 2–33 字 │ 32 個 16 進位小寫字元：只能是 0-9 或 a-f（不接受大寫 A-F） │
+  ├────────────┼────────────────────────────────────────────────────────────┤
+  │ 總長度     │ 33 字                                                      │
+  └────────────┴────────────────────────────────────────────────────────────┘
+
+  官方範例：U8189cf6745fc0d808977bdb0b9f22995
+
+  我的 DTO regex 對應到官方規格
+
+  PushMessageRequest.java 裡我寫的：
+
+  @Pattern(regexp = "^U[0-9a-f]{32}$", ...)
+
+  跟官方規格完全一致：
+  - ^U — 開頭必須大寫 U
+  - [0-9a-f]{32} — 接 32 個小寫 hex
+  - $ — 結尾
+
+  對照你剛剛的測試
+
+  你剛剛想測 404 傳的：
+
+  "lineUserId": "Aa1f34c7fd733e88abdaf0dd27941b6b0"
+                  ^ 這是大寫 A
+
+  - 開頭是 A 不是 U → 違反規格
+  - 我的 DTO regex 會擋下來 → 回 400 Bad Request（如果 JWT 有效的話）
+
+  要真的測到 404，用格式合法但 DB 沒有的 userId，比如：
+
+  {"lineUserId":"U00000000000000000000000000000000","text":"test"}
+
+  （大寫 U + 32 個 0，過 regex 但 findByLineUserId 找不到 → 進 MessagingService
+  的 orElseThrow(new ResponseStatusException(NOT_FOUND, ...)) → 404）
+
+  順帶提醒
+
+  如果你之後看到別人的 userId 出現「大寫 hex」（像
+  UABC...），那不合官方規格、也不會是真實的 LINE 
+  userId，多半是別人手打亂編的假資料。你的 regex 正好幫你把這些擋掉。
+
+  Sources:
+  - Get user IDs | LINE Developers
+  - Messaging API reference | LINE Developers
+
+✻ Cooked for 52s
+
+❯  5. 驗證失敗：text 給空字串 → 400。                                           
+  curl -i -X POST http://localhost:8080/api/messages/push -H "Authorization:    
+  Bearer eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxIiwibGluZVVzZXJJZCI6IlVhMWYzNGM3ZmQ3M 
+  zNlODhhYmRhZjBkZDI3OTQxYjZiMCIsImRpc3BsYXlOYW1lIjoiWm9lIiwiaWF0IjoxNzg2MzcyMT 
+  gwLCJleHAiOjE3ODYzNzU3ODB9.XeqTPzDAMTcmGMnj_WLv2OW-9COiOPsa4GNkfntq64V4rolCq_ 
+  0JfY1Ev62EuVAa7ixE7v1ZrGpA-OSMziblng" -H "Content-Type: application/json" -d  
+  '{"lineUserId":"Ua1f34c7fd733e88abdaf0dd27941b6b0","text":""}'                
+                                                                                
+  HTTP/1.1 401                                                                  
+  Vary: Origin                                                                  
+  Vary: Access-Control-Request-Method                                           
+  Vary: Access-Control-Request-Headers                                          
+  X-Content-Type-Options: nosniff                                               
+  X-XSS-Protection: 0                                                           
+  Cache-Control: no-cache, no-store, max-age=0, must-revalidate                 
+  Pragma: no-cache                                                              
+  Expires: 0                                                                    
+  X-Frame-Options: DENY                                                         
+  Content-Length: 0                                                             
+  Date: Mon, 10 Aug 2026 15:40:12 GMT                                           
+
+⏺ 還是 401 Content-Length: 0 —— 這代表你 一直卡在同一個問題：JWT
+  過不了認證，根本沒到 validation 那步。
+
+  我上一則叫你先跑 /api/me 你跳過了，這次真的先做這件事，不然打幾百遍 push
+  都會是 401。
+
+  先看一眼實際的 JWT service 是怎麼驗證的
+
+  Searched for 1 pattern, read 2 files, ran 1 shell command (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯  curl -i -X POST http://localhost:8080/api/messages/push -H "Authorization:   
+  Bearer eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxIiwibGluZVVzZXJJZCI6IlVhMWYzNGM3ZmQ3M 
+  zNlODhhYmRhZjBkZDI3OTQxYjZiMCIsImRpc3BsYXlOYW1lIjoiWm9lIiwiaWF0IjoxNzg2Mzc2Nz 
+  k3LCJleHAiOjE3ODYzODAzOTd9._HnE21p9xtL2RTs6OslCf0PHZ8U5hAqI28i4WjFyg2b3sCt6mn 
+  wXZvAa6kDb8pq4w9iIlZsD9NlfSGdHYV2Qlw" -H "Content-Type: application/json" -d  
+  '{"lineUserId":"Ua1f34c7fd733e88abdaf0dd27941b6b0","text":""}'                
+  HTTP/1.1 401                                                                  
+  Vary: Origin                                                                  
+  Vary: Access-Control-Request-Method                                           
+  Vary: Access-Control-Request-Headers                                          
+  X-Content-Type-Options: nosniff                                               
+  X-XSS-Protection: 0                                                           
+  Cache-Control: no-cache, no-store, max-age=0, must-revalidate                 
+  Pragma: no-cache                                                              
+  Expires: 0                                                                    
+  X-Frame-Options: DENY                                                         
+  Content-Length: 0                                                             
+  Date: Mon, 10 Aug 2026 15:47:28 GMT                                           
+   5. 驗證失敗：text 給空字串 → 400。                                           
+  payload 的 text 是空字串為什麼不是回400                                       
+
+⏺ 為什麼空字串沒有回 400 —— 因為根本沒到 validation
+
+  Spring 的請求處理是有先後順序的：
+
+  mermaid
+  flowchart LR
+      A[Request] --> B[Security<br/>Filter Chain]
+      B -- "認證失敗" --> Z1[401<br/>Content-Length: 0]
+      B -- "認證通過" --> C[DispatcherServlet<br/>路由到 controller]
+      C --> D[@Valid 驗證<br/>PushMessageRequest]
+      D -- "驗證失敗" --> Z2[400 Bad Request]
+      D -- "驗證通過" --> E[MessagingService]
+      E -- "user 不存在" --> Z3[404]
+      E -- "未追蹤" --> Z4[409]
+      E --> F[LineMessagingClient]
+      F -- "LINE 4xx/5xx" --> Z5[502/409/429/...]
+      F --> Z6[200 sent]
+
+  你現在卡在最左邊那格（Security Filter Chain 沒過），所以：
+  - @Valid 檢查空字串 → 沒跑
+  - MessagingService 找 user → 沒跑
+  - 訊息送出去 → 沒跑
+
+  不管你把 body 的 text 給 ""、給表情符號、給 5001 字，只要 JWT
+  過不了認證，永遠都是 401 Content-Length: 0。
+
+  你新的 JWT 我算了時間，應該是有效的
+
+  ┌───────────────┬─────────────────────┐
+  │     項目      │      UTC 時間       │
+  ├───────────────┼─────────────────────┤
+  │ JWT iat       │ 2026-08-10 15:46:37 │
+  ├───────────────┼─────────────────────┤
+  │ JWT exp       │ 2026-08-10 16:46:37 │
+  ├───────────────┼─────────────────────┤
+  │ Response Date │ 2026-08-10 15:47:28 │
+  └───────────────┴─────────────────────┘
+
+  剛簽發不到 1 分鐘，離過期還有 59 分鐘。理論上絕對有效。
+
+  但實際被擋，只剩三個可能，我需要你幫我確認：
+
+  三個必做的診斷步驟（順序執行）
+
+  步驟 1：看 backend log 到底報什麼錯
+
+  docker compose logs backend --tail 50 -f
+
+  然後另開一個 terminal 打上面那個 curl，看新 log 有沒有下面這幾種訊息：
+
+  ┌───────────────────────────────────┬─────────────────────────────────────┐
+  │             Log 訊息              │                意義                 │
+  ├───────────────────────────────────┼─────────────────────────────────────┤
+  │ SignatureException: JWT signature │ JWT 是被別的 JWT_SECRET 簽的        │
+  │  does not match                   │                                     │
+  ├───────────────────────────────────┼─────────────────────────────────────┤
+  │ ExpiredJwtException               │ 過期（不太可能）                    │
+  ├───────────────────────────────────┼─────────────────────────────────────┤
+  │ MalformedJwtException             │ JWT 字串被截斷或字元錯              │
+  ├───────────────────────────────────┼─────────────────────────────────────┤
+  │ WeakKeyException                  │ 你的 secret 太短，jjwt 拒絕（但這樣 │
+  │                                   │  backend 早就啟不了）               │
+  ├───────────────────────────────────┼─────────────────────────────────────┤
+  │ 完全沒有錯誤訊息                  │ JwtAuthFilter 根本沒被觸發，可能    │
+  │                                   │ header 名字/格式問題                │
+  └───────────────────────────────────┴─────────────────────────────────────┘
+
+  步驟 2：用同一張 JWT 打 /api/me（最單純的認證測試）
+
+  curl -i http://localhost:8080/api/me -H "Authorization: Bearer 
+  eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxIiwibGluZVVzZXJJZCI6IlVhMWYzNGM3ZmQ3MzNlODhhY
+  mRhZjBkZDI3OTQxYjZiMCIsImRpc3BsYXlOYW1lIjoiWm9lIiwiaWF0IjoxNzg2Mzc2Nzk3LCJleHA
+  iOjE3ODYzODAzOTd9._HnE21p9xtL2RTs6OslCf0PHZ8U5hAqI28i4WjFyg2b3sCt6mnwXZvAa6kDb
+  8pq4w9iIlZsD9NlfSGdHYV2Qlw"
+
+  - 回 200 {...} → JWT 沒問題，可繼續其他測試
+  - 回 401 → JWT 認證出問題，跟 endpoint 無關
+
+  步驟 3：檢查 backend 有沒有讀到現在 .env 的 JWT_SECRET
+
+  從 docker compose ps 看到：
+
+  line-oauth-poc-backend-1   Up 8 hours ago
+
+  你的 backend 容器已經跑 8 小時沒重啟過。如果你在這 8 小時內動過 .env 的
+  JWT_SECRET（例如貼了新的 base64 字串），容器內還是用舊的。
+
+  檢查容器實際載入的 secret：
+
+  docker compose exec backend env | grep JWT_SECRET
+
+  比對 .env（你貼給我的是
+  Fk8x48e0wqpL57W/jfCOQe8JmX1cC0o/vHZAFlf3sBlSzT6JD1OVhGYCUtUIDZ90）——
+  兩邊要一模一樣。
+
+  如果不一樣：.env 改過但容器沒重啟，.env 值只在啟動時被讀取。修法：
+
+  docker compose up -d --force-recreate backend
+
+  重啟後必須重新走 LINE 登入拿新 JWT（因為舊 JWT 是用舊 secret 簽的）。
+
+  為什麼上面那三步一定要按順序做
+
+  - 步驟 1 直接告訴你確切原因，不用猜
+  - 步驟 2 隔離「JWT 問題」vs「endpoint 問題」
+  - 步驟 3 是最常見的 root cause（.env 改了容器沒重啟）
+
+  跑完把三步的輸出貼給我，我一次幫你收斂到答案。
+
+✻ Cooked for 1m 46s
+
+❯ 在 UI 做一個下拉式選單,，最少選一個,，可以多選,，選單就是使用者的             
+  lineUserId,點擊發送按鈕後就會打ＡＰＩ：https://developers.line.biz/en/referen 
+  ce/messaging-api/#send-multicast-message 給user                               
+
+⏺ 好，這是一個「後端多加一個 multicast endpoint +
+  前端加個發送介面」的功能。我先看一眼前端目前長什麼樣才能決定 UI
+  要放哪、風格對齊什麼，同時看一下 LINE multicast API 規格：
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+
+⏺ Fetch(https://developers.line.biz/en/reference/messaging-api/#send-multicast-m
+       essage)
+  ⎿  Received 146.4KB (200 OK)
+
+⏺ Fetch(https://developers.line.biz/en/reference/messaging-api/index.html.md)  ⎿  Received 676.5KB (200 OK)
+
+  Read 5 files, listed 1 directory (ctrl+o to expand)
+
+⏺ 前後端都要動。我看清楚後端已有的 LineMessagingClient
+  和前端結構後，把設計和關鍵決策先攤在你面前確認。
+
+  LINE Multicast API 規格摘要
+
+  - POST https://api.line.me/v2/bot/message/multicast
+  - Header：Authorization: Bearer {channel-access-token} + Content-Type: 
+  application/json
+  - Body：{"to": ["Uxxx", "Uyyy", ...], "messages": 
+  [{"type":"text","text":"..."}]}
+  - 上限：單次最多 500 個收件人、to 陣列不可重複
+  - 成功：200 {}，X-Line-Request-Id 在 header
+  - 未追蹤 OA 的收件人：LINE 端靜默略過（API 仍回 200，個別遞送狀態要用 webhook
+  或 delivery API 才知道）
+
+  我打算做的改動
+
+  後端
+
+  ┌──────────────────────────┬──────────────────────────────────────────────┐
+  │           檔案           │                     改動                     │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ LineProperties.java      │ 加 multicastEndpoint                         │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ application.yml          │ 加 multicast-endpoint:                       │
+  │                          │ https://api.line.me/v2/bot/message/multicast │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ LineMessagingClient.java │ 加 multicastText(List<String> to, String     │
+  │                          │ text) 方法                                   │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ MessagingService.java    │ 加 multicast(MulticastRequest) 方法          │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │                          │ DTO，lineUserIds:                            │
+  │ MulticastRequest.java 新 │ List<String>（@Size(min=1,max=500) +         │
+  │                          │ 每個元素 @Pattern）+ text                    │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ MulticastResponse.java   │ 回 {status, requestId, sentTo}               │
+  │ 新                       │                                              │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ MessagingController.java │ 加 POST /api/messages/multicast              │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │                          │ GET /api/users/recipients 回 [{lineUserId,   │
+  │ UserController.java 新   │ displayName, pictureUrl,                     │
+  │                          │ officialAccountFollowed}] 供前端做下拉選單   │
+  └──────────────────────────┴──────────────────────────────────────────────┘
+
+  前端
+
+  ┌──────────────────────┬───────────────────────────────────────────────────┐
+  │         檔案         │                       改動                        │
+  ├──────────────────────┼───────────────────────────────────────────────────┤
+  │ BroadcastPage.tsx 新 │ 新頁面：多選下拉 + textarea + 送出按鈕 + 結果訊息 │
+  ├──────────────────────┼───────────────────────────────────────────────────┤
+  │ App.tsx              │ 加 /broadcast route（需 JWT）                     │
+  ├──────────────────────┼───────────────────────────────────────────────────┤
+  │ ProductsPage.tsx     │ header 加一個「傳送 LINE 訊息」連結去 /broadcast  │
+  └──────────────────────┴───────────────────────────────────────────────────┘
+
+  前端不裝新依賴，用原生 <select multiple>（配 Tailwind 樣式）—— 因為 POC
+  不值得引 headlessui / react-select 這種套件。
+
+  ---
+  在下手之前有兩件事想跟你確認：
+
+⏺ User answered Claude's questions:
+  ⎿  · 下拉選單里對於「未追蹤官方帳號」的使用者怎麼處理？ → 顯示且可選
+     · 發送頁面放在哪裡？ → 直接嵌在 ProductsPage 下方
+
+⏺ 好，兩個決策都收到：
+  - 收件人清單全部顯示且可選（後端不 filter、也不擋，讓 LINE
+  自己靜默略過未追蹤者）
+  - UI 直接嵌在 ProductsPage 下方
+
+  先建 task 清單追進度。
+
+⏺ Update(backend/src/main/java/com/poc/lineauth/config/LineProperties.java)
+  ⎿  Added 2 lines, removed 1 line
+      15          String prompt,
+      16          String oaAddFriendUrl,
+      17          String channelAccessToken,
+      18 -        String pushEndpoint                                    
+      18 +        String pushEndpoint,                                   
+      19 +        String multicastEndpoint                               
+      20  ) {}
+      21   No newline at end of file
+
+⏺ Update(backend/src/main/resources/application.yml)
+  ⎿  Added 1 line
+      32    oa-add-friend-url: ${LINE_OA_ADD_FRIEND_URL:https://line.me/R
+          /ti/p/@901yglmb}
+      33    channel-access-token: ${LINE_CHANNEL_ACCESS_TOKEN}
+      34    push-endpoint: https://api.line.me/v2/bot/message/push
+      35 +  multicast-endpoint: https://api.line.me/v2/bot/message/multic
+         +ast                                                            
+      36  
+      37  app:
+      38    frontend-url: ${FRONTEND_URL}
+
+⏺ Update(backend/src/main/java/com/poc/lineauth/messaging/LineMessagingClient.ja
+        va)
+  ⎿  Added 21 lines, removed 1 line
+      39                  "to", toLineUserId,
+      40                  "messages", List.of(Map.of("type", "text", "tex
+          t", text))
+      41          );
+      42 +        return postAndGetRequestId(props.pushEndpoint(), body);
+      43 +    }                                                          
+      44  
+      45 +    /**                                                        
+      46 +     * 對多位 LINE 使用者同時送出一則 text 訊息（multicast）。 
+      47 +     * 未追蹤官方帳號的收件人會被 LINE 靜默略過，API 仍會回 200
+         +。                                                             
+      48 +     *                                                         
+      49 +     * @param toLineUserIds 收件人 LINE userId 陣列，1..500 且 
+         +不可重複                                                       
+      50 +     * @param text          訊息內容，長度不超過 5000          
+      51 +     * @return LINE 回應的 {@code X-Line-Request-Id} header 值 
+         +，可能為 {@code null}                                          
+      52 +     * @throws LineApiException 上游回非 2xx 時拋出，攜帶原始狀
+         +態碼與 body                                                    
+      53 +     */                                                        
+      54 +    public String multicastText(List<String> toLineUserIds, Str
+         +ing text) {                                                    
+      55 +        Map<String, Object> body = Map.of(                     
+      56 +                "to", toLineUserIds,                           
+      57 +                "messages", List.of(Map.of("type", "text", "tex
+         +t", text))                                                     
+      58 +        );                                                     
+      59 +        return postAndGetRequestId(props.multicastEndpoint(), b
+         +ody);                                                          
+      60 +    }                                                          
+      61 +                                                               
+      62 +    private String postAndGetRequestId(String endpoint, Map<Str
+         +ing, Object> body) {                                           
+      63          return http.post()
+      44 -                .uri(props.pushEndpoint())                     
+      64 +                .uri(endpoint)                                 
+      65                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + 
+          props.channelAccessToken())
+      66                  .contentType(MediaType.APPLICATION_JSON)
+      67                  .body(body)
+
+⏺ Write(backend/src/main/java/com/poc/lineauth/messaging/MulticastRequest.java)  ⎿  Wrote 27 lines to
+     backend/src/main/java/com/poc/lineauth/messaging/MulticastRequest.java
+       1 package com.poc.lineauth.messaging;
+       2 
+       3 import jakarta.validation.constraints.NotBlank;
+       4 import jakarta.validation.constraints.NotEmpty;
+       5 import jakarta.validation.constraints.Pattern;
+       6 import jakarta.validation.constraints.Size;
+       7 
+       8 import java.util.List;
+       9 
+      10 /**
+     … +22 lines (ctrl+o to expand)
+
+⏺ Write(backend/src/main/java/com/poc/lineauth/messaging/MulticastResponse.java)
+  ⎿  Wrote 13 lines to backend/src/main/java/com/poc/lineauth/messaging/Mul
+     ticastResponse.java
+       1 package com.poc.lineauth.messaging;
+       2 
+       4  * {@code POST /api/messages/multicast} 的成功回應。
+       5  * <p>
+       6  * {@code sentTo} 只表示送出的 recipient 數量，並不代表每個人都
+       7  * 未追蹤官方帳號的人會被 LINE 端靜默略過，我們這裡不會知道。
+       8  */
+       9 public record MulticastResponse(String status, String requestId,
+      10     public static MulticastResponse sent(String requestId, int s
+         entTo) {
+     … +6 lines (ctrl+o to expand)
+
+⏺ Update(backend/src/main/java/com/poc/lineauth/messaging/MessagingService.java)
+  ⎿  Added 11 lines
+      44          String requestId = client.pushText(user.getLineUserId()
+          , req.text());
+      45          return PushMessageResponse.sent(requestId);
+      46      }
+      47 +                                                               
+      48 +    /**                                                        
+      49 +     * 對多位使用者送 text 訊息（multicast）。                 
+      50 +     * <p>                                                     
+      51 +     * 依照設計決策：這裡不預先過濾未追蹤者，直接把整個名單交給
+         + LINE。                                                        
+      52 +     * 未追蹤者會被 LINE 靜默略過；若要即時同步追蹤狀態，得再接
+         + follow/unfollow webhook。                                     
+      53 +     */                                                        
+      54 +    public MulticastResponse multicast(MulticastRequest req) { 
+      55 +        String requestId = client.multicastText(req.lineUserIds
+         +(), req.text());                                               
+      56 +        return MulticastResponse.sent(requestId, req.lineUserId
+         +s().size());                                                   
+      57 +    }                                                          
+      58  }
+
+⏺ Update(backend/src/main/java/com/poc/lineauth/messaging/MessagingController.ja
+        va)
+  ⎿  Added 5 lines
+      34          return ResponseEntity.ok(service.push(req));
+      35      }
+      36  
+      37 +    @PostMapping("/multicast")                                 
+      38 +    public ResponseEntity<MulticastResponse> multicast(@Valid @
+         +RequestBody MulticastRequest req) {                            
+      39 +        return ResponseEntity.ok(service.multicast(req));      
+      40 +    }                                                          
+      41 +                                                               
+      42      @ExceptionHandler(UserNotFollowingException.class)
+      43      public ResponseEntity<Map<String, Object>> handleNotFollowi
+          ng(UserNotFollowingException ex) {
+      44          return ResponseEntity.status(HttpStatus.CONFLICT).body(
+          Map.of(
+
+⏺ 現在建 users list endpoint 給前端下拉選單用：
+
+⏺ Write(backend/src/main/java/com/poc/lineauth/user/UserController.java)
+  ⎿  Wrote 48 lines to
+     backend/src/main/java/com/poc/lineauth/user/UserController.java
+       1 package com.poc.lineauth.user;
+       2 
+       3 import org.springframework.web.bind.annotation.GetMapping;
+       4 import org.springframework.web.bind.annotation.RequestMapping;
+       5 import org.springframework.web.bind.annotation.RestController;
+       6 
+       7 import java.util.List;
+       8 
+       9 /**
+      10  * 使用者列表相關 endpoint。
+     … +40 lines (ctrl+o to expand)
+
+⏺ Write(frontend/src/pages/ProductsPage.tsx)
+  ⎿  Added 130 lines, removed 1 line
+      1 -import { useQuery } from '@tanstack/react-query';               
+      1 +import { useState } from 'react';                               
+      2 +import { useMutation, useQuery } from '@tanstack/react-query';  
+      3  import { useNavigate } from 'react-router-dom';
+      4  import { api } from '../lib/api';
+      5  import { tokenStore } from '../lib/auth';
+     ...
+      13    oaAddFriendUrl: string;
+      14  };
+      15  
+      16 +type Recipient = {                                             
+      17 +  lineUserId: string;                                          
+      18 +  displayName: string;                                         
+      19 +  pictureUrl: string;                                          
+      20 +  officialAccountFollowed: boolean;                            
+      21 +};                                                             
+      22 +                                                               
+      23 +type MulticastResponse = {                                     
+      24 +  status: string;                                              
+      25 +  requestId: string;                                           
+      26 +  sentTo: number;                                              
+      27 +};                                                             
+      28 +                                                               
+      29  const mockProducts = [
+      30    { id: 1, name: '經典咖啡豆 500g', price: 480 },
+      31    { id: 2, name: '手沖濾杯', price: 320 },
+     ...
+      103              </div>
+      104            ))}
+      105          </div>
+      106 +                                                              
+      107 +        <BroadcastSection />                                  
+      108        </main>
+      109      </div>
+      110    );
+      111  }
+      112 +                                                              
+      113 +function BroadcastSection() {                                 
+      114 +  const [selectedIds, setSelectedIds] = useState<string[]>([])
+          +;                                                             
+      115 +  const [text, setText] = useState('');                       
+      116 +                                                              
+      117 +  const { data: recipients, isLoading: recipientsLoading, isEr
+          +ror: recipientsError } = useQuery<Recipient[]>({              
+      118 +    queryKey: ['recipients'],                                 
+      119 +    queryFn: async () => (await api.get<Recipient[]>('/api/use
+          +rs/recipients')).data,                                        
+      120 +  });                                                         
+      121 +                                                              
+      122 +  const mutation = useMutation<MulticastResponse, unknown, { l
+          +ineUserIds: string[]; text: string }>({                       
+      123 +    mutationFn: async (body) => (await api.post<MulticastRespo
+          +nse>('/api/messages/multicast', body)).data,                  
+      124 +    onSuccess: () => {                                        
+      125 +      setText('');                                            
+      126 +      setSelectedIds([]);                                     
+      127 +    },                                                        
+      128 +  });                                                         
+      129 +                                                              
+      130 +  const handleSelectChange = (e: React.ChangeEvent<HTMLSelectE
+          +lement>) => {                                                 
+      131 +    const ids = Array.from(e.target.selectedOptions).map((opt)
+          + => opt.value);                                               
+      132 +    setSelectedIds(ids);                                      
+      133 +  };                                                          
+      134 +                                                              
+      135 +  const handleSend = () => {                                  
+      136 +    if (selectedIds.length === 0 || !text.trim()) return;     
+      137 +    mutation.mutate({ lineUserIds: selectedIds, text: text.tri
+          +m() });                                                       
+      138 +  };                                                          
+      139 +                                                              
+      140 +  const disabled = selectedIds.length === 0 || !text.trim() ||
+          + mutation.isPending;                                          
+      141 +                                                              
+      142 +  return (                                                    
+      143 +    <section className="mt-10 bg-white rounded-xl shadow-sm bo
+          +rder border-slate-100 p-6">                                   
+      144 +      <h2 className="text-xl font-semibold text-slate-800 mb-1
+          +">傳送 LINE 訊息（Multicast）</h2>                            
+      145 +      <p className="text-sm text-slate-500 mb-4">             
+      146 +        選擇一或多位收件人，輸入文字後發送。未追蹤官方帳號的收
+          +件人會被 LINE 靜默略過。                                      
+      147 +      </p>                                                    
+      148 +                                                              
+      149 +      {recipientsLoading && <div className="text-slate-500 tex
+          +t-sm">收件人清單載入中…</div>}                                
+      150 +      {recipientsError && <div className="text-red-500 text-sm
+          +">無法載入收件人清單</div>}                                   
+      151 +                                                              
+      152 +      {recipients && (                                        
+      153 +        <div className="space-y-4">                           
+      154 +          <div>                                               
+      155 +            <label className="block text-sm font-medium text-s
+          +late-700 mb-1">                                               
+      156 +              收件人 <span className="text-slate-400 font-norm
+          +al">（按住 ⌘ / Ctrl 可多選，至少 1 位、最多 500 位）</span>   
+      157 +            </label>                                          
+      158 +            <select                                           
+      159 +              multiple                                        
+      160 +              size={Math.min(Math.max(recipients.length, 3), 8
+          +)}                                                            
+      161 +              value={selectedIds}                             
+      162 +              onChange={handleSelectChange}                   
+      163 +              className="w-full border border-slate-300 rounde
+          +d-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:r
+          +ing-emerald-500"                                              
+      164 +            >                                                 
+      165 +              {recipients.map((r) => (                        
+      166 +                <option key={r.lineUserId} value={r.lineUserId
+          +}>                                                            
+      167 +                  {r.displayName} — {r.lineUserId} {r.official
+          +AccountFollowed ? '' : '（未追蹤 OA）'}                       
+      168 +                </option>                                     
+      169 +              ))}                                             
+      170 +            </select>                                         
+      171 +            <div className="text-xs text-slate-500 mt-1">已選 
+          +{selectedIds.length} 位</div>                                 
+      172 +          </div>                                              
+      173 +                                                              
+      174 +          <div>                                               
+      175 +            <label className="block text-sm font-medium text-s
+          +late-700 mb-1">                                               
+      176 +              訊息內容 <span className="text-slate-400 font-no
+          +rmal">（最多 5000 字）</span>                                 
+      177 +            </label>                                          
+      178 +            <textarea                                         
+      179 +              value={text}                                    
+      180 +              onChange={(e) => setText(e.target.value)}       
+      181 +              rows={4}                                        
+      182 +              maxLength={5000}                                
+      183 +              placeholder="輸入要發送的訊息…"                 
+      184 +              className="w-full border border-slate-300 rounde
+          +d-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:r
+          +ing-emerald-500"                                              
+      185 +            />                                                
+      186 +            <div className="text-xs text-slate-500 mt-1">{text
+          +.length} / 5000</div>                                         
+      187 +          </div>                                              
+      188 +                                                              
+      189 +          <div className="flex items-center gap-3">           
+      190 +            <button                                           
+      191 +              onClick={handleSend}                            
+      192 +              disabled={disabled}                             
+      193 +              className="text-sm font-medium text-white bg-eme
+          +rald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:c
+          +ursor-not-allowed px-5 py-2 rounded-md"                       
+      194 +            >                                                 
+      195 +              {mutation.isPending ? '傳送中…' : '發送'}       
+      196 +            </button>                                         
+      197 +                                                              
+      198 +            {mutation.isSuccess && mutation.data && (         
+      199 +              <span className="text-sm text-emerald-700">     
+      200 +                ✓ 已送出 {mutation.data.sentTo} 位（requestId 
+          +：{mutation.data.requestId ?? '—'}）                          
+      201 +              </span>                                         
+      202 +            )}                                                
+      203 +            {mutation.isError && (                            
+      204 +              <span className="text-sm text-red-600">         
+      205 +                ✗ 發送失敗：{extractErrorMessage(mutation.erro
+          +r)}                                                           
+      206 +              </span>                                         
+      207 +            )}                                                
+      208 +          </div>                                              
+      209 +        </div>                                                
+      210 +      )}                                                      
+      211 +    </section>                                                
+      212 +  );                                                          
+      213 +}                                                             
+      214 +                                                              
+      215 +function extractErrorMessage(err: unknown): string {          
+      216 +  if (err && typeof err === 'object' && 'response' in err) {  
+      217 +    const resp = (err as { response?: { status?: number; data?
+          +: unknown } }).response;                                      
+      218 +    if (resp) {                                               
+      219 +      const body = typeof resp.data === 'string' ? resp.data :
+          + JSON.stringify(resp.data);                                   
+      220 +      return `${resp.status} ${body}`;                        
+      221 +    }                                                         
+      222 +  }                                                           
+      223 +  return err instanceof Error ? err.message : String(err);    
+      224 +}                                                             
+
+⏺ 跑 backend 編譯 + frontend TypeScript check：
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ - Backend: BUILD SUCCESS，23 source files（原 20 + 新
+  3：MulticastRequest、MulticastResponse、UserController）
+  - Frontend TS: 只有一個先前就存在的錯（api.ts 的 import.meta.env 型別缺
+  vite/client），跟我這次改動無關，vite dev server 本身仍會正常跑
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ 確認：那個 TS 錯是 initial commit 就有的，不是我這次改的。
+
+  Ran 1 shell command (ctrl+o to expand)
+⏺ 完成。以下是這波 multicast 功能的總覽：
+
+  改動總覽
+
+  後端
+
+  ┌──────────────────────────────┬──────────────────────────────────────────┐
+  │             檔案             │                   動作                   │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ LineProperties.java          │ 加 multicastEndpoint                     │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ application.yml              │ 加 multicast-endpoint: https://api.line. │
+  │                              │ me/v2/bot/message/multicast              │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │                              │ 加 multicastText(List<String>,           │
+  │ LineMessagingClient.java     │ String)，同時把 push / multicast 共用的  │
+  │                              │ POST 邏輯抽成 postAndGetRequestId(...)   │
+  │                              │ private helper                           │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │                              │ DTO：@NotEmpty @Size(max=500)            │
+  │ MulticastRequest.java 新     │ List<@Pattern String> lineUserIds +      │
+  │                              │ @NotBlank @Size(max=5000) String text    │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ MulticastResponse.java 新    │ {status, requestId, sentTo}              │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ MessagingService.multicast(. │ 依決策不預先過濾未追蹤者，直接交給 LINE  │
+  │ ..)                          │                                          │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ MessagingController          │ 加 POST /api/messages/multicast          │
+  ├──────────────────────────────┼──────────────────────────────────────────┤
+  │ UserController.java 新       │ GET /api/users/recipients                │
+  │                              │ 回全部使用者含追蹤狀態                   │
+  └──────────────────────────────┴──────────────────────────────────────────┘
+
+  前端
+
+  ┌──────────────────┬───────────────────────────────────────────────────────┐
+  │       檔案       │                         動作                          │
+  ├──────────────────┼───────────────────────────────────────────────────────┤
+  │                  │ 商品列表下方加 <BroadcastSection> 子元件：多選        │
+  │ ProductsPage.tsx │ <select multiple>（含 ⌘/Ctrl 多選提示）+              │
+  │                  │ textarea（含字數計）+ 發送按鈕（0 位或空字串會        │
+  │                  │ disable）+ 成功/失敗訊息                              │
+  └──────────────────┴───────────────────────────────────────────────────────┘
+
+  編譯狀態：
+  - backend mvn clean compile → BUILD SUCCESS (23 files)
+  - frontend tsc --noEmit → 只有一個 initial commit 就有的既存錯（api.ts 的
+  import.meta.env），不影響 vite dev server
+
+  你要做的事
+
+  還記得你之前那個 JWT 401 卡關嗎？這個 UI 也一樣需要有效 JWT 
+  才能運作（/api/users/recipients 和 /api/messages/multicast 都在 SecurityConfig
+  的 anyRequest().authenticated() 之內）。所以要先把 JWT 問題解決：
+
+  # 1. 重啟 backend 讓它讀最新的程式碼 + .env
+  docker compose up -d --build --force-recreate backend
+
+  # 2. 檢查容器實際載入的 JWT_SECRET 是否和 .env 一致
+  docker compose exec backend env | grep JWT_SECRET
+
+  # 3. 瀏覽器完全清 localStorage，重新走 LINE 登入
+
+  然後：
+
+  1. 進 /products 頁面，往下捲會看到「傳送 LINE 訊息（Multicast）」區塊
+  2. 收件人清單載進來 → ⌘-click 選幾個 → 輸入文字 → 按「發送」
+  3. 成功會顯示 ✓ 已送出 N 位（requestId：...）
+  4. 你手機（有追蹤 OA 的那個帳號）的 LINE 應該秒收到訊息
+
+  幾個實作重點交代
+
+  - 前端不擋未追蹤者：清單同時列出未追蹤的人並標「（未追蹤
+  OA）」，讓你決定要不要選。後端也不擋，一路傳給 LINE，LINE 靜默略過
+  - 後端 DTO 驗證元素：List<@Pattern String> 這種 type-argument 約束，Spring
+  Boot 3.3.5 + Hibernate Validator 8 直接支援，@Valid 會遞迴驗證
+  - 共用 POST helper：postAndGetRequestId 被 push 和 multicast 共用，未來要加
+  broadcast / narrowcast 也是同一套錯誤處理
+  - sentTo 的意涵：這個數字是你送出的名單長度，不是「LINE 確認送達的數量」——
+  因為 multicast API 不會即時回報每個人的狀態，要靠 delivery API 或 webhook
+  才能知道實際遞送結果
+
+  明知故問但沒做的（out of scope）
+
+  - sentTo 之外的每人遞送成功/失敗回報（需 delivery report API）
+  - 選項篩選 / 分頁 / 搜尋（如果 users 超過 100 個下拉就開始難用）
+  - 非 text 訊息（sticker / flex）
+  - 自動測試（POM 仍沒 spring-boot-starter-test）
+
+✻ Brewed for 7m 50s
+
+❯ 先幫我解決 JWT 401 問題                                                       
+
+⏺ 好，來系統性地解掉這個問題。我先把幾個能拿到的線索一次撈齊，不用你動手：
+
+  Read 1 file, ran 5 shell commands (ctrl+o to expand)
+
+⏺ 三個關鍵訊號都乾淨：
+
+  - ✅ JWT_SECRET 容器與 host 一模一樣（SHA 前 16 位都是
+  13d92143fcfcc2eb，長度都是 64）→ 不是 secret 不同步問題
+  - ✅ DB 有 user id=1（Zoe），跟 JWT payload 的 sub:"1" 對得上 → 不是 user 
+  不存在問題
+  - ⚠️ backend log 沒抓到 JWT exception，但 JwtAuthFilter.java:44 的 catch 
+  (...ignored) 是靜默 catch，所以看不到很正常
+
+  那 JWT 到底過不過？我用 openssl 直接算 HMAC-SHA512 對照你貼給我的 JWT
+  簽章，看能不能匹配：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ 簽章是對的！ 那 JWT 用當前 JWT_SECRET 簽的沒問題。這打破了「secret
+  不對」的假設。
+
+  那 401 從哪來？我直接自己用同個 secret 造一張現在有效的 
+  JWT，繞開前端登入流程，看 backend 到底吃不吃：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ 找到了！！！關鍵發現：
+
+  ┌─────────────────────────────────────┬──────────────────────┐
+  │              Endpoint               │         結果         │
+  ├─────────────────────────────────────┼──────────────────────┤
+  │ /api/me （用同一張新鑄的 JWT）      │ HTTP 200 ✅ — 有資料 │
+  ├─────────────────────────────────────┼──────────────────────┤
+  │ /api/messages/push （用同一張 JWT） │ HTTP 401 ❌          │
+  └─────────────────────────────────────┴──────────────────────┘
+
+  JWT 完全有效！問題不是 JWT，是 /api/messages/push 這個 endpoint 在運行的 
+  backend 容器裡根本不存在。
+
+  還記得 docker compose ps 顯示 backend Up 8 hours 嗎？—— 就是我這次 session
+  開始前的舊 image。你的 MessagingController 是我在這輪 session 內新增的，還沒重
+  build，容器裡跑的還是舊 JAR。
+
+  Spring Security 的行為：對 unknown path 會 forward 到 /error，/error
+  也需要認證，過程中 SecurityContext 可能被清 → 就吐
+  401。表面看起來像認證失敗，實際是「路由 miss + Security 的錯誤處理雙重效果」。
+
+  我來確認並修：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ 等等 —— 現在全部都通了！三個新 endpoint 都回 200。
+
+  但我上一個測試 "" 空字串是 401，現在 "x" 是 200，看起來像空字串路徑特別會
+  401，跟 endpoint 存不存在無關。這意味著更奇怪的事。我立刻重測空字串再驗一次：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ 啊哈！這是另一個現象，不是原本的 JWT 問題。真正的規律是：
+
+  ┌──────────────────────────────────────────────────────────────┬────────┐
+  │                          送出的內容                          │  結果  │
+  ├──────────────────────────────────────────────────────────────┼────────┤
+  │ text:"x" （有效）                                            │ 200 ✅ │
+  ├──────────────────────────────────────────────────────────────┼────────┤
+  │ text:"" （會被 @Valid 擋）                                   │ 401 ❌ │
+  ├──────────────────────────────────────────────────────────────┼────────┤
+  │ lineUserId:"Aa..." （會被 @Pattern 擋）                      │ 401 ❌ │
+  ├──────────────────────────────────────────────────────────────┼────────┤
+  │ lineUserId:"U000..." （會觸發 ResponseStatusException(404)） │ 401 ❌ │
+  └──────────────────────────────────────────────────────────────┴────────┘
+
+  規律：當請求本該回 400/404/409 這類業務錯誤時，反而被回 401。
+
+  真正的 root cause
+
+  這是 Spring Boot + Spring Security 的經典陷阱：
+
+  1. Controller 或 @Valid 拋例外
+  2. Spring 用 RequestDispatcher.forward() 導到內建的 /error 頁面渲染錯誤 body
+  3. 這個 forward 觸發 Security filter chain 重新檢查 /error 路徑
+  4. SecurityConfig 裡 /error 不在 permitAll 清單，走
+  anyRequest().authenticated()
+  5. 在 forward 情境下 SecurityContext 已被清 → 走 HttpStatusEntryPoint → 回 401
+  + Content-Length: 0
+
+  也就是說，你之前所有的 401 都不是 JWT 
+  有問題，而是背後的業務錯誤（400/404）在被 render 成 error 頁面時被 Security 
+  攔到吐 401 蓋過去。
+
+  一行修法
+
+  SecurityConfig 把 /error 加進 permitAll。順便先看一下你先前那些 401
+  到底本來該是什麼狀態碼 —— 我看 backend log 有印出來嗎？
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+⏺ Log 完美證實了！三行 MethodArgumentNotValidException 都被
+  DefaultHandlerExceptionResolver 成功解析成 400，但因為 forward 到 /error 被
+  Security 攔截，客戶端看到 401。
+
+  修法：一行
+
+⏺ Update(backend/src/main/java/com/poc/lineauth/config/SecurityConfig.java)
+  ⎿  Added 3 lines
+      37              .authorizeHttpRequests(auth -> auth
+      38                  .requestMatchers("/api/auth/**").permitAll()
+      39                  .requestMatchers("/actuator/health").permitAll(
+          )
+      40 +                // 讓 Spring Boot forward 到 /error 渲染錯誤頁 
+         +時不會被 Security 二次攔截成 401，                             
+      41 +                // 蓋掉真實的 400/404/500 狀態碼               
+      42 +                .requestMatchers("/error").permitAll()         
+      43                  .anyRequest().authenticated()
+      44              )
+      45              .addFilterBefore(jwtAuthFilter, UsernamePasswordAut
+          henticationFilter.class);
+
+⏺ 改完，重建 + 重啟 backend + 完整跑過四個分支驗證：
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+⏺ 全綠通過！ 你的 LINE 應該剛剛收到「401 修完啦 🎉」的訊息（第 5 個 case
+  是真的送出去的）。
+
+  完整診斷過程 & 結論
+
+  我之前給你的三個假設全部錯了，先跟你道歉：
+
+  ┌─────────────────────────────┬─────────────────────────────────────────┐
+  │         我之前說的          │                實際情況                 │
+  ├─────────────────────────────┼─────────────────────────────────────────┤
+  │ JWT_SECRET 容器/host 不同步 │ ❌ 一模一樣（SHA 13d92143fcfcc2eb）     │
+  ├─────────────────────────────┼─────────────────────────────────────────┤
+  │ 容器沒重啟導致舊 secret     │ ❌ 容器 16:07 才起，JWT_SECRET 是對的   │
+  ├─────────────────────────────┼─────────────────────────────────────────┤
+  │ JWT 過期或簽章壞掉          │ ❌ 用 openssl 手算 HMAC-SHA512 對得起來 │
+  └─────────────────────────────┴─────────────────────────────────────────┘
+
+  真正的 root cause 是 Spring Boot + Spring Security 的一個經典陷阱：
+
+  mermaid
+  sequenceDiagram
+      participant curl
+      participant Sec as Security Filter Chain
+      participant Ctrl as MessagingController
+      participant EP as /error (內建)
+
+      Note over curl,Sec: 第一輪：處理原始 request
+      curl->>Sec: POST /api/messages/push (Bearer JWT)
+      Sec->>Sec: JwtAuthFilter 驗 JWT ✓ 設 SecurityContext
+      Sec->>Ctrl: 通過認證，進 controller
+      Ctrl-->>Sec: @Valid 拋 MethodArgumentNotValidException<br/>Spring
+  內部解析為 status=400
+      Note over Sec: 準備 forward 到 /error 渲染錯誤頁
+
+      Note over Sec,EP: 第二輪：處理 forward 到 /error 的 request
+      Sec->>Sec: 重跑 authorizeHttpRequests<br/>/error 不在 permitAll<br/>需要
+  authenticated()
+      Note over Sec: 但 SecurityContext 在 forward 之間<br/>被
+  SecurityContextHolderFilter 清掉了
+      Sec-->>curl: HttpStatusEntryPoint → 401 Content-Length: 0<br/>(本來的 400
+  被蓋掉了)
+
+  Backend log 有留鐵證：
+
+  WARN ... DefaultHandlerExceptionResolver : Resolved
+  [MethodArgumentNotValidException: Validation failed for argument [0] ...
+  'text': rejected value []]
+
+  —— Spring 內部確實解成 400 了，只是最後被 Security 攔截蓋成 401。
+
+  修法：1 行
+
+  SecurityConfig.java 把 /error 加進 permitAll：
+
+  .requestMatchers("/error").permitAll()
+
+  這樣 Spring forward 到 /error 渲染錯誤頁時 Security 不會攔，真實的 400/404/500
+  才能傳到 client。
+
+  影響範圍
+
+  - 這也解釋為什麼你之前所有的 401 都是 401——不管是 @Valid 空字串、格式錯的
+  userId、DB 沒有的 userId，全都被壓成 401
+  - 這是伺服器 bug，不是 JWT 問題。你當初 401 的時候，JWT 其實一直都是有效的
+  - 這個 bug 本來就存在於原始 codebase（不是我加 messaging 引入的）——
+  只是你之前沒測過會出錯的分支，所以沒發現
+
+  接下來
+
+  - 你手上原本的 JWT 不用重拿（如果還沒過期），該 work 就 work，不會再被無故 401
+  - 前端的 multicast UI 可以照原本步驟去測了：
+    a. 瀏覽器 http://localhost:5173 → 走一次 LINE 登入拿新 JWT
+    b. 進 /products → 往下捲到「傳送 LINE 訊息（Multicast）」
+    c. ⌘-click 選收件人 → 打字 → 按發送
+  - 之前那 15 個 task 全部 completed，backend 已重新 build & 部署最新
+  code，可以放心用
+
+✻ Baked for 7m 5s

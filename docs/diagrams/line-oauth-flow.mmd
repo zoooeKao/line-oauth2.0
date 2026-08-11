@@ -42,4 +42,38 @@ sequenceDiagram
     BE-->>FE: 使用者資料 (200)<br/>含 officialAccountFollowed / oaAddFriendUrl
     FE-->>U: 顯示商品頁與使用者資訊<br/>未加入官方帳號則顯示「加入官方帳號」提示按鈕
 
+    Note over U,LINE: 階段五 推播訊息 (Multicast)
+    U->>FE: 於商品頁選擇收件人 (可多選)<br/>輸入訊息內容並點「發送」
+    FE->>BE: GET /api/users/recipients (Bearer JWT)
+    BE->>DB: 查詢所有 User (含未追蹤者)
+    DB-->>BE: User 清單
+    BE-->>FE: 收件人清單<br/>(lineUserId / displayName / officialAccountFollowed)
+    FE->>BE: POST /api/messages/multicast<br/>{ lineUserIds[], text } (Bearer JWT)
+    BE->>BE: JwtAuthFilter 驗證 JWT<br/>@Valid 檢查 payload
+    BE->>LINE: POST /v2/bot/message/multicast<br/>(Bearer channelAccessToken)
+    LINE-->>BE: 200 OK + x-line-request-id<br/>(未追蹤者由 LINE 靜默略過)
+    BE-->>FE: { status, requestId, sentTo }
+    FE-->>U: 顯示「已送出 N 位」與 requestId
+
+    Note over U,LINE: 補充 單人推播 (Push)
+    FE->>BE: POST /api/messages/push<br/>{ lineUserId, text } (Bearer JWT)
+    BE->>DB: 依 lineUserId 查 User
+    alt 找不到 User
+        BE-->>FE: 404 Not Found
+    else 未追蹤官方帳號 (本地快取)
+        BE-->>FE: 409 oa_not_followed<br/>+ oaAddFriendUrl
+    else 已追蹤
+        BE->>LINE: POST /v2/bot/message/push<br/>(Bearer channelAccessToken)
+        alt LINE 回 403 (事後解除追蹤 / 已封鎖)
+            LINE-->>BE: 403 Forbidden
+            BE-->>FE: 409 line_api_error
+        else LINE 回 429 (配額超限)
+            LINE-->>BE: 429 Too Many Requests
+            BE-->>FE: 429 line_api_error
+        else 成功
+            LINE-->>BE: 200 OK + x-line-request-id
+            BE-->>FE: { status: "sent", requestId }
+        end
+    end
+
     Note over FE,BE: 失敗情境<br/>JWT 無效或過期 → 401 → 前端清除 token 並導回 /login
