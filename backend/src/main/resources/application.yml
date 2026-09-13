@@ -25,7 +25,6 @@ line:
   redirect-uri: ${LINE_REDIRECT_URI}
   authorize-endpoint: https://access.line.me/oauth2/v2.1/authorize
   token-endpoint: https://api.line.me/oauth2/v2.1/token
-  profile-endpoint: https://api.line.me/v2/profile
   friendship-endpoint: https://api.line.me/friendship/v1/status
   bot-prompt: ${LINE_BOT_PROMPT:normal}
   prompt: ${LINE_PROMPT:consent}

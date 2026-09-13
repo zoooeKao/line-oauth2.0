@@ -21,10 +21,9 @@ sequenceDiagram
     Note over U,LINE: 階段三 後端換 token 與簽發 JWT
     U->>BE: GET /api/auth/line/callback?code&state&friendship_status_changed
     BE->>BE: 比對 cookie state 與 query state<br/>不符則導回前端錯誤頁
-    BE->>LINE: POST token endpoint<br/>(code + client_secret 換 access_token)
-    LINE-->>BE: access_token
-    BE->>LINE: GET profile (Bearer access_token)
-    LINE-->>BE: userId / displayName / pictureUrl
+    BE->>LINE: POST token endpoint<br/>(code + client_secret 換 access_token + id_token)
+    LINE-->>BE: access_token + id_token
+    BE->>BE: 以 channel_secret 驗 id_token HS256<br/>解析 sub / name / picture
     BE->>LINE: GET friendship/v1/status (Bearer access_token)
     LINE-->>BE: friendFlag 在(是否已加入官方帳號)
     BE->>DB: upsert 使用者 (依 lineId, 含 oaFriendFlag)

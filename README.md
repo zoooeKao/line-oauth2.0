@@ -48,9 +48,9 @@ docker compose down -v       # 清掉 Postgres volume
 | 欄位 | 型別 | 約束 | 說明 |
 |---|---|---|---|
 | `id` | `BIGSERIAL` | PK, `IDENTITY` | 內部主鍵,簽 JWT 時放在 `sub` |
-| `line_id` | `VARCHAR` | `NOT NULL`, `UNIQUE` | LINE Profile API 回傳的 `userId`,查詢與 push 目標 |
-| `line_display_name` | `VARCHAR` | `NOT NULL` | LINE 顯示名稱,每次登入 upsert 覆寫 |
-| `line_picture_url` | `VARCHAR` | 可 null | LINE 頭像 URL |
+| `line_id` | `VARCHAR` | `NOT NULL`, `UNIQUE` | LINE id_token 的 `sub`,查詢與 push 目標 |
+| `line_display_name` | `VARCHAR` | `NOT NULL` | LINE id_token 的 `name`,每次登入 upsert 覆寫 |
+| `line_picture_url` | `VARCHAR` | 可 null | LINE id_token 的 `picture` |
 | `oa_friend_flag` | `BOOLEAN` | `NOT NULL`, default `false` | 登入時透過 Friendship API 抓,決定能否 push |
 | `created_at` | `TIMESTAMP` | `NOT NULL`, 不可 update | `@PrePersist` 寫入 |
 | `updated_at` | `TIMESTAMP` | `NOT NULL` | `@PreUpdate` 更新 |
@@ -83,7 +83,7 @@ CREATE TABLE users (
 | # | Method + 路徑 | 呼叫者 | Auth | 用途 |
 |---|---|---|---|---|
 | 1 | `GET /api/auth/line/authorize` | `LoginPage.tsx` (整頁 `window.location.href`) | 無 | 觸發後端種 `line_oauth_state` cookie 並 302 到 LINE authorize 頁 |
-| 2 | `GET /api/auth/line/callback?code&state&friendship_status_changed` | **由 LINE 302 觸發**,非前端主動打 | 無(靠 cookie state 比對) | 後端換 token、抓 profile / friendship、upsert user、簽 JWT,再 302 到前端 `/auth/callback?token=JWT` |
+| 2 | `GET /api/auth/line/callback?code&state&friendship_status_changed` | **由 LINE 302 觸發**,非前端主動打 | 無(靠 cookie state 比對) | 後端換 token(access_token + id_token)、驗章解析 id_token 取 profile、查 friendship、upsert user、簽 JWT,再 302 到前端 `/auth/callback?token=JWT` |
 | 3 | `GET /api/me` | `ProductsPage.tsx` (TanStack Query `['me']`) | Bearer JWT | 取當前使用者資料 + `oaAddFriendUrl`,決定是否顯示「加入官方帳號」提示 |
 | 4 | `GET /api/users/recipients` | `ProductsPage.tsx` BroadcastSection (TanStack Query `['recipients']`) | Bearer JWT | 撈 multicast 下拉選單清單(含未追蹤者,由前端標示) |
 | 5 | `POST /api/messages/multicast` | `ProductsPage.tsx` BroadcastSection (`useMutation`) | Bearer JWT | body: `{ lineIds: string[], text: string }`,批次送 LINE 訊息 |
@@ -94,23 +94,24 @@ CREATE TABLE users (
 
 ## LINE API 一覽
 
-專案共呼叫 LINE 的 **6 個 endpoint**,分成三組。所有 URL 集中設定在 `backend/src/main/resources/application.yml` 的 `line.*`,程式端不硬編。
+專案共呼叫 LINE 的 **5 個 endpoint**,分成三組。所有 URL 集中設定在 `backend/src/main/resources/application.yml` 的 `line.*`,程式端不硬編。使用者 profile 改由 token endpoint 回傳的 `id_token` 直接解析,不再打 `/v2/profile`。
 
 ### 一、OAuth 登入 (User Access Token 流程)
 
 | # | Endpoint | 呼叫者 | 認證方式 | 用途 |
 |---|---|---|---|---|
 | 1 | `GET https://access.line.me/oauth2/v2.1/authorize` | `AuthController.authorize` (瀏覽器 302 導向) | 無 (query 帶 `client_id` / `state` / `scope=profile openid` / `bot_prompt` / `prompt`) | 帶使用者到 LINE 授權畫面,包含「加入官方帳號」選項 |
-| 2 | `POST https://api.line.me/oauth2/v2.1/token` | `LineOAuthClient.exchangeCodeForToken` | Form body: `client_id` + `client_secret` + `code` | 用 authorization code 換 user access token |
+| 2 | `POST https://api.line.me/oauth2/v2.1/token` | `LineOAuthClient.exchangeCodeForToken` | Form body: `client_id` + `client_secret` + `code` | 用 authorization code 換 user access token 與 id_token(scope 含 openid 才有) |
 
-### 二、使用者資料與好友狀態 (Bearer User Access Token)
+拿到 id_token 後,`LineOAuthClient.parseIdToken` 以 `channel_secret` 為金鑰驗 HS256 簽章,並檢查 `iss=https://access.line.me` / `aud=channel_id`,取出 `sub` / `name` / `picture` 對應到 `users.line_id` / `line_display_name` / `line_picture_url`。省去一次跨機房呼叫、消除 profile API 的單點信任。
 
-以上一步拿到的 access token 打,一次登入用一次即丟。
+### 二、好友狀態 (Bearer User Access Token)
+
+用上一步的 access token 打,一次登入用一次即丟。
 
 | # | Endpoint | 呼叫者 | 認證方式 | 用途 |
 |---|---|---|---|---|
-| 3 | `GET https://api.line.me/v2/profile` | `LineOAuthClient.fetchProfile` | `Authorization: Bearer <user access token>` | 取得 `userId` / `displayName` / `pictureUrl`,寫入 `users` 表 |
-| 4 | `GET https://api.line.me/friendship/v1/status` | `LineOAuthClient.isFriend` | `Authorization: Bearer <user access token>` | 讀 `friendFlag` 判斷是否已追蹤官方帳號,寫入 `users.oa_friend_flag` |
+| 3 | `GET https://api.line.me/friendship/v1/status` | `LineOAuthClient.isFriend` | `Authorization: Bearer <user access token>` | 讀 `friendFlag` 判斷是否已追蹤官方帳號,寫入 `users.oa_friend_flag` |
 
 ### 三、Messaging API 推播 (Bearer Channel Access Token)
 
@@ -118,8 +119,8 @@ CREATE TABLE users (
 
 | # | Endpoint | 呼叫者 | 認證方式 | 用途 |
 |---|---|---|---|---|
-| 5 | `POST https://api.line.me/v2/bot/message/push` | `LineMessagingClient.pushText` | `Authorization: Bearer <channel access token>` | 對**單一** userId 推播;`MessagingService` 會先檢查 `oaFriendFlag`,未追蹤直接回 409 + 加好友連結,不打 LINE |
-| 6 | `POST https://api.line.me/v2/bot/message/multicast` | `LineMessagingClient.multicastText` | `Authorization: Bearer <channel access token>` | 對 **1..500 位** userId 批次推播同一則訊息;不做本地追蹤檢查,未追蹤者由 LINE 靜默略過 |
+| 4 | `POST https://api.line.me/v2/bot/message/push` | `LineMessagingClient.pushText` | `Authorization: Bearer <channel access token>` | 對**單一** userId 推播;`MessagingService` 會先檢查 `oaFriendFlag`,未追蹤直接回 409 + 加好友連結,不打 LINE |
+| 5 | `POST https://api.line.me/v2/bot/message/multicast` | `LineMessagingClient.multicastText` | `Authorization: Bearer <channel access token>` | 對 **1..500 位** userId 批次推播同一則訊息;不做本地追蹤檢查,未追蹤者由 LINE 靜默略過 |
 
 ### Push vs Multicast
 

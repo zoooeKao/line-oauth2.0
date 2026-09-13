@@ -90,7 +90,8 @@ public class AuthController {
 
         try {
             LineTokenResponse token = lineClient.exchangeCodeForToken(code);
-            LineProfile profile = lineClient.fetchProfile(token.accessToken());
+            // scope=openid 時 token endpoint 已回 id_token，其中 sub/name/picture 即 profile，省一次 /v2/profile
+            LineProfile profile = lineClient.parseIdToken(token.idToken());
             // friendship_status_changed 只代表本次是否有變動；當下好友狀態以 Friendship API 為準
             boolean isFriend = lineClient.isFriend(token.accessToken());
             User user = userService.upsertFromLineProfile(profile, isFriend);

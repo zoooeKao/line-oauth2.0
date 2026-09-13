@@ -9,7 +9,6 @@ public record LineProperties(
         String redirectUri,
         String authorizeEndpoint,
         String tokenEndpoint,
-        String profileEndpoint,
         String friendshipEndpoint,
         String botPrompt,
         String prompt,
