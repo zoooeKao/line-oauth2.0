@@ -11,7 +11,7 @@ import com.poc.lineauth.user.UserRepository;
 /**
  * Push message 的協調層：
  * <ol>
- *   <li>依 {@code lineUserId} 找出 User（找不到 → 404）。</li>
+ *   <li>依 {@code lineId} 找出 User（找不到 → 404）。</li>
  *   <li>檢查是否追蹤官方帳號（未追蹤 → 409，由 controller 附上邀請連結）。</li>
  *   <li>委派給 {@link PushClient} 呼叫 LINE Messaging API。</li>
  * </ol>
@@ -34,17 +34,17 @@ public class PushService {
     }
 
     public PushResponse push(PushRequest req) {
-        User user = userRepository.findByLineUserId(req.lineUserId())
+        User user = userRepository.findByLineId(req.lineId())
                 .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND, "User not found for lineUserId"));
+                        HttpStatus.NOT_FOUND, "User not found for lineId"));
 
-        if (!user.isOfficialAccountFollowed()) {
+        if (!user.isOaFriendFlag()) {
             // 本地快取的追蹤狀態只在登入時更新；若使用者事後解除追蹤，
             // 這裡會過關，之後 LINE 端會回 403，由 LineErrorExceptionHandler 轉為 409。
             throw new UserNotFollowingException(lineProps.oaAddFriendUrl());
         }
 
-        String requestId = client.pushText(user.getLineUserId(), req.text());
+        String requestId = client.pushText(user.getLineId(), req.text());
         return PushResponse.sent(requestId);
     }
 }

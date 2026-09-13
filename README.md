@@ -48,10 +48,10 @@ docker compose down -v       # 清掉 Postgres volume
 | 欄位 | 型別 | 約束 | 說明 |
 |---|---|---|---|
 | `id` | `BIGSERIAL` | PK, `IDENTITY` | 內部主鍵,簽 JWT 時放在 `sub` |
-| `line_user_id` | `VARCHAR` | `NOT NULL`, `UNIQUE` | LINE Profile API 回傳的 `userId`,查詢與 push 目標 |
-| `display_name` | `VARCHAR` | `NOT NULL` | LINE 顯示名稱,每次登入 upsert 覆寫 |
-| `picture_url` | `VARCHAR` | 可 null | LINE 頭像 URL |
-| `official_account_followed` | `BOOLEAN` | `NOT NULL`, default `false` | 登入時透過 Friendship API 抓,決定能否 push |
+| `line_id` | `VARCHAR` | `NOT NULL`, `UNIQUE` | LINE Profile API 回傳的 `userId`,查詢與 push 目標 |
+| `line_display_name` | `VARCHAR` | `NOT NULL` | LINE 顯示名稱,每次登入 upsert 覆寫 |
+| `line_picture_url` | `VARCHAR` | 可 null | LINE 頭像 URL |
+| `oa_friend_flag` | `BOOLEAN` | `NOT NULL`, default `false` | 登入時透過 Friendship API 抓,決定能否 push |
 | `created_at` | `TIMESTAMP` | `NOT NULL`, 不可 update | `@PrePersist` 寫入 |
 | `updated_at` | `TIMESTAMP` | `NOT NULL` | `@PreUpdate` 更新 |
 
@@ -60,10 +60,10 @@ docker compose down -v       # 清掉 Postgres volume
 ```sql
 CREATE TABLE users (
     id                          BIGSERIAL PRIMARY KEY,
-    line_user_id                VARCHAR(255) NOT NULL UNIQUE,
-    display_name                VARCHAR(255) NOT NULL,
-    picture_url                 VARCHAR(255),
-    official_account_followed   BOOLEAN NOT NULL DEFAULT false,
+    line_id                     VARCHAR(255) NOT NULL UNIQUE,
+    line_display_name           VARCHAR(255) NOT NULL,
+    line_picture_url            VARCHAR(255),
+    oa_friend_flag         BOOLEAN NOT NULL DEFAULT false,
     created_at                  TIMESTAMP NOT NULL,
     updated_at                  TIMESTAMP NOT NULL
 );
@@ -86,7 +86,7 @@ CREATE TABLE users (
 | 2 | `GET /api/auth/line/callback?code&state&friendship_status_changed` | **由 LINE 302 觸發**,非前端主動打 | 無(靠 cookie state 比對) | 後端換 token、抓 profile / friendship、upsert user、簽 JWT,再 302 到前端 `/auth/callback?token=JWT` |
 | 3 | `GET /api/me` | `ProductsPage.tsx` (TanStack Query `['me']`) | Bearer JWT | 取當前使用者資料 + `oaAddFriendUrl`,決定是否顯示「加入官方帳號」提示 |
 | 4 | `GET /api/users/recipients` | `ProductsPage.tsx` BroadcastSection (TanStack Query `['recipients']`) | Bearer JWT | 撈 multicast 下拉選單清單(含未追蹤者,由前端標示) |
-| 5 | `POST /api/messages/multicast` | `ProductsPage.tsx` BroadcastSection (`useMutation`) | Bearer JWT | body: `{ lineUserIds: string[], text: string }`,批次送 LINE 訊息 |
+| 5 | `POST /api/messages/multicast` | `ProductsPage.tsx` BroadcastSection (`useMutation`) | Bearer JWT | body: `{ lineIds: string[], text: string }`,批次送 LINE 訊息 |
 
 ⚠️ 後端 `POST /api/messages/push` 目前**前端沒使用**,是預留給未來一對一個人化通知(訂單、驗證碼等)的接口 — 相較 multicast,它會先擋未追蹤者並回 `409 oa_not_followed` + `oaAddFriendUrl` 引導加好友。
 
@@ -110,7 +110,7 @@ CREATE TABLE users (
 | # | Endpoint | 呼叫者 | 認證方式 | 用途 |
 |---|---|---|---|---|
 | 3 | `GET https://api.line.me/v2/profile` | `LineOAuthClient.fetchProfile` | `Authorization: Bearer <user access token>` | 取得 `userId` / `displayName` / `pictureUrl`,寫入 `users` 表 |
-| 4 | `GET https://api.line.me/friendship/v1/status` | `LineOAuthClient.isFriend` | `Authorization: Bearer <user access token>` | 讀 `friendFlag` 判斷是否已追蹤官方帳號,寫入 `users.official_account_followed` |
+| 4 | `GET https://api.line.me/friendship/v1/status` | `LineOAuthClient.isFriend` | `Authorization: Bearer <user access token>` | 讀 `friendFlag` 判斷是否已追蹤官方帳號,寫入 `users.oa_friend_flag` |
 
 ### 三、Messaging API 推播 (Bearer Channel Access Token)
 
@@ -118,7 +118,7 @@ CREATE TABLE users (
 
 | # | Endpoint | 呼叫者 | 認證方式 | 用途 |
 |---|---|---|---|---|
-| 5 | `POST https://api.line.me/v2/bot/message/push` | `LineMessagingClient.pushText` | `Authorization: Bearer <channel access token>` | 對**單一** userId 推播;`MessagingService` 會先檢查 `officialAccountFollowed`,未追蹤直接回 409 + 加好友連結,不打 LINE |
+| 5 | `POST https://api.line.me/v2/bot/message/push` | `LineMessagingClient.pushText` | `Authorization: Bearer <channel access token>` | 對**單一** userId 推播;`MessagingService` 會先檢查 `oaFriendFlag`,未追蹤直接回 409 + 加好友連結,不打 LINE |
 | 6 | `POST https://api.line.me/v2/bot/message/multicast` | `LineMessagingClient.multicastText` | `Authorization: Bearer <channel access token>` | 對 **1..500 位** userId 批次推播同一則訊息;不做本地追蹤檢查,未追蹤者由 LINE 靜默略過 |
 
 ### Push vs Multicast
@@ -131,7 +131,7 @@ CREATE TABLE users (
 | 收件人型別 | user / group / room | **僅 user** |
 | 訊息內容 | 每次呼叫可不同 | 同批同一則 |
 | 錯誤定位 | 一對一,能知道單筆成敗 | 整批一個 `x-line-request-id`,個別失敗查不到 |
-| 追蹤檢查 | 後端先查 `officialAccountFollowed`,未追蹤回 409 | 不檢查,交由 LINE 靜默略過 |
+| 追蹤檢查 | 後端先查 `oaFriendFlag`,未追蹤回 409 | 不檢查,交由 LINE 靜默略過 |
 | 計費 | 都算「已推播訊息數 = 收件人數」,成本相同 | 同左 |
 
 Multicast 技術上可以放 1 個 userId,但一對一個人化通知(訂單、驗證碼、客服回覆)仍建議走 push,才能拿到未追蹤的 409 提示 + 明確的成敗回應。

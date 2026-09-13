@@ -10,7 +10,7 @@ import java.util.List;
  * 使用者列表相關 endpoint。
  * <p>
  * 目前只提供收件人清單，供前端做 multicast 下拉選單。
- * 依設計決策：即使 {@code officialAccountFollowed=false} 也一併回傳，
+ * 依設計決策：即使 {@code oaFriendFlag=false} 也一併回傳，
  * 讓前端可以顯示追蹤狀態、由使用者自行決定是否包含在名單內。
  */
 @RestController
@@ -31,17 +31,17 @@ public class UserController {
     }
 
     public record RecipientView(
-            String lineUserId,
-            String displayName,
-            String pictureUrl,
-            boolean officialAccountFollowed
+            String lineId,
+            String lineDisplayName,
+            String linePictureUrl,
+            boolean oaFriendFlag
     ) {
         static RecipientView from(User u) {
             return new RecipientView(
-                    u.getLineUserId(),
-                    u.getDisplayName(),
-                    u.getPictureUrl() == null ? "" : u.getPictureUrl(),
-                    u.isOfficialAccountFollowed()
+                    u.getLineId(),
+                    u.getLineDisplayName(),
+                    u.getLinePictureUrl() == null ? "" : u.getLinePictureUrl(),
+                    u.isOaFriendFlag()
             );
         }
     }

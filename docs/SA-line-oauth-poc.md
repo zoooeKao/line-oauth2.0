@@ -20,7 +20,7 @@
 - LINE OAuth 2.0 Authorization Code 流程
 - `state` + HttpOnly Cookie 的 CSRF 防護
 - 後端以 Channel secret 換 `access_token`、取得使用者 profile
-- 依 `lineUserId` upsert 使用者
+- 依 `lineId` upsert 使用者
 - **登入時引導加入 LINE 官方帳號**（`bot_prompt` + Friendship Status API 查詢 `friendFlag`）
 - 簽發 / 驗證自家 JWT，保護 `/api/me`
 - 前端登入頁、回呼頁、商品頁與 401 自動登出
@@ -98,9 +98,9 @@ flowchart LR
 13. 後端 `GET` profile（`Bearer access_token`）。
 14. LINE 回傳 `userId / displayName / pictureUrl`。
 15. 後端 `GET` friendship status（`Bearer access_token`），取得 `friendFlag`（是否已加入官方帳號）。`friendship_status_changed` 僅代表本次是否有變動，當下狀態一律以此 API 為準。
-16. `UserService.upsertFromLineProfile()` 依 `lineUserId` 新建或更新，並寫入 `officialAccountFollowed`。
+16. `UserService.upsertFromLineProfile()` 依 `lineId` 新建或更新，並寫入 `oaFriendFlag`。
 17. DB 回傳 `User`。
-18. `JwtService.issue()` 簽發自家 JWT（`sub=userId`，含 `lineUserId`、`displayName`）。
+18. `JwtService.issue()` 簽發自家 JWT（`sub=userId`，含 `lineId`、`lineDisplayName`）。
 19. 後端 `302` 導向前端 `/auth/callback?token=JWT`。
 
 ### 階段四　前端保存與存取受保護資源
@@ -111,8 +111,8 @@ flowchart LR
 23. `JwtAuthFilter` 驗章、取 `sub`。
 24. 依 `sub` 查 `User`，放入 SecurityContext。
 25. DB 回傳 `User`。
-26. 後端回 `200` + 使用者資料（含 `officialAccountFollowed`、`oaAddFriendUrl`）。
-27. 前端顯示商品頁；若 `officialAccountFollowed=false`，於商品列表上方顯示「加入官方帳號」提示按鈕（連向 `oaAddFriendUrl`）。
+26. 後端回 `200` + 使用者資料（含 `oaFriendFlag`、`oaAddFriendUrl`）。
+27. 前端顯示商品頁；若 `oaFriendFlag=false`，於商品列表上方顯示「加入官方帳號」提示按鈕（連向 `oaAddFriendUrl`）。
 
 ### 4.1　前置設定：綁定 Linked LINE Official Account
 
@@ -135,7 +135,7 @@ JWT 無效或過期 → 後端回 **401**（`HttpStatusEntryPoint`）→ 前端 
 | ------ | -------------------------- | ---------- | -------------------------- | --------------------------------------------------------- |
 | GET    | `/api/auth/line/authorize` | 否         | 產生 state、302 轉址 LINE  | `302` → LINE                                              |
 | GET    | `/api/auth/line/callback`  | 否         | 驗 state、換 token、查好友狀態、簽 JWT | `302` → 前端（成功帶 `token`，失敗帶 `error`）            |
-| GET    | `/api/me`                  | Bearer JWT | 取登入者資料               | `200` `{id, lineUserId, displayName, pictureUrl, officialAccountFollowed, oaAddFriendUrl}` / `401` |
+| GET    | `/api/me`                  | Bearer JWT | 取登入者資料               | `200` `{id, lineId, lineDisplayName, linePictureUrl, oaFriendFlag, oaAddFriendUrl}` / `401` |
 | GET    | `/actuator/health`         | 否         | 健康檢查                   | `200`                                                     |
 
 ---
@@ -147,10 +147,10 @@ JWT 無效或過期 → 後端回 **401**（`HttpStatusEntryPoint`）→ 前端 
 | 欄位           | 型別      | 約束                              |
 | -------------- | --------- | --------------------------------- |
 | `id`           | BIGINT    | PK, identity                      |
-| `line_user_id` | VARCHAR   | NOT NULL, **UNIQUE**（upsert 鍵） |
-| `display_name` | VARCHAR   | NOT NULL                          |
-| `picture_url`  | VARCHAR   | nullable                          |
-| `official_account_followed` | BOOLEAN | NOT NULL, 預設 false（是否已加入官方帳號） |
+| `line_id`      | VARCHAR   | NOT NULL, **UNIQUE**（upsert 鍵） |
+| `line_display_name` | VARCHAR | NOT NULL                        |
+| `line_picture_url`  | VARCHAR | nullable                        |
+| `oa_friend_flag` | BOOLEAN | NOT NULL, 預設 false（是否已加入官方帳號） |
 | `created_at`   | TIMESTAMP | NOT NULL, 不可更新                |
 | `updated_at`   | TIMESTAMP | NOT NULL                          |
 

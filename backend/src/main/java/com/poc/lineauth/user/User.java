@@ -13,17 +13,18 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "line_user_id", nullable = false, unique = true)
-    private String lineUserId;
+    @Column(name = "line_id", nullable = false, unique = true)
+    private String lineId;
 
-    @Column(nullable = false)
-    private String displayName;
+    @Column(name = "line_display_name", nullable = false)
+    private String lineDisplayName;
 
-    private String pictureUrl;
+    @Column(name = "line_picture_url")
+    private String linePictureUrl;
 
-    @Column(name = "official_account_followed", nullable = false)
+    @Column(name = "oa_friend_flag", nullable = false)
     @ColumnDefault("false")
-    private boolean officialAccountFollowed = false;
+    private boolean oaFriendFlag = false;
 
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
@@ -44,14 +45,14 @@ public class User {
     }
 
     public Long getId() { return id; }
-    public String getLineUserId() { return lineUserId; }
-    public void setLineUserId(String v) { this.lineUserId = v; }
-    public String getDisplayName() { return displayName; }
-    public void setDisplayName(String v) { this.displayName = v; }
-    public String getPictureUrl() { return pictureUrl; }
-    public void setPictureUrl(String v) { this.pictureUrl = v; }
-    public boolean isOfficialAccountFollowed() { return officialAccountFollowed; }
-    public void setOfficialAccountFollowed(boolean v) { this.officialAccountFollowed = v; }
+    public String getLineId() { return lineId; }
+    public void setLineId(String v) { this.lineId = v; }
+    public String getLineDisplayName() { return lineDisplayName; }
+    public void setLineDisplayName(String v) { this.lineDisplayName = v; }
+    public String getLinePictureUrl() { return linePictureUrl; }
+    public void setLinePictureUrl(String v) { this.linePictureUrl = v; }
+    public boolean isOaFriendFlag() { return oaFriendFlag; }
+    public void setOaFriendFlag(boolean v) { this.oaFriendFlag = v; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 }

@@ -103,7 +103,7 @@ function footer(slide, n) {
     "Authorization Code 授權流程",
     "state + HttpOnly Cookie 防 CSRF",
     "以 Channel secret 換 access_token、取 profile",
-    "依 lineUserId upsert 使用者",
+    "依 lineId upsert 使用者",
     "簽發 / 驗證自家 JWT，保護 /api/me",
     "前端登入頁、回呼頁、401 自動登出",
   ].map((t, i, a) => ({ text: t, options: { bullet: { code: "2022", indent: 14 }, color: INK, breakLine: i !== a.length - 1, paraSpaceAfter: 8 } })),
@@ -241,9 +241,9 @@ function footer(slide, n) {
   s.addShape(pres.shapes.RECTANGLE, { x: dx, y: 1.98, w: 3.63, h: 3.55, fill: { color: NAVY }, shadow: shadow() });
   const cols = [
     ["id", "BIGINT · PK"],
-    ["line_user_id", "UNIQUE · upsert 鍵"],
-    ["display_name", "NOT NULL"],
-    ["picture_url", "nullable"],
+    ["line_id", "UNIQUE · upsert 鍵"],
+    ["line_display_name", "NOT NULL"],
+    ["line_picture_url", "nullable"],
     ["created_at", "不可更新"],
     ["updated_at", "每次更新"],
   ];

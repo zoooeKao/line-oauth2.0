@@ -28,8 +28,8 @@ public class JwtService {
         Instant now = Instant.now();
         return Jwts.builder()
                 .subject(String.valueOf(user.getId()))
-                .claim("lineUserId", user.getLineUserId())
-                .claim("displayName", user.getDisplayName())
+                .claim("lineId", user.getLineId())
+                .claim("lineDisplayName", user.getLineDisplayName())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(expiryMinutes * 60)))
                 .signWith(key)

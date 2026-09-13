@@ -39,8 +39,8 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/index.html:/app/index.html
+      - ../../frontend/src:/app/src
+      - ../../frontend/index.html:/app/index.html
     environment:
       VITE_API_BASE: http://localhost:8080
 

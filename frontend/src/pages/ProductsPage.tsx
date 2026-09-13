@@ -6,18 +6,18 @@ import { tokenStore } from '../lib/auth';
 
 type Me = {
   id: number;
-  lineUserId: string;
-  displayName: string;
-  pictureUrl: string;
-  officialAccountFollowed: boolean;
+  lineId: string;
+  lineDisplayName: string;
+  linePictureUrl: string;
+  oaFriendFlag: boolean;
   oaAddFriendUrl: string;
 };
 
 type Recipient = {
-  lineUserId: string;
-  displayName: string;
-  pictureUrl: string;
-  officialAccountFollowed: boolean;
+  lineId: string;
+  lineDisplayName: string;
+  linePictureUrl: string;
+  oaFriendFlag: boolean;
 };
 
 type MulticastResponse = {
@@ -58,12 +58,12 @@ export default function ProductsPage() {
       <header className="bg-white border-b border-slate-200">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {me.pictureUrl && (
-              <img src={me.pictureUrl} alt={me.displayName} className="w-10 h-10 rounded-full" />
+            {me.linePictureUrl && (
+              <img src={me.linePictureUrl} alt={me.lineDisplayName} className="w-10 h-10 rounded-full" />
             )}
             <div>
-              <div className="font-medium text-slate-800">{me.displayName}</div>
-              <div className="text-xs text-slate-500">{me.lineUserId}</div>
+              <div className="font-medium text-slate-800">{me.lineDisplayName}</div>
+              <div className="text-xs text-slate-500">{me.lineId}</div>
             </div>
           </div>
           <button
@@ -76,7 +76,7 @@ export default function ProductsPage() {
       </header>
 
       <main className="max-w-4xl mx-auto px-6 py-8">
-        {!me.officialAccountFollowed && (
+        {!me.oaFriendFlag && (
           <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-4">
             <div>
               <div className="font-medium text-emerald-800">還沒加入我們的官方帳號</div>
@@ -119,7 +119,7 @@ function BroadcastSection() {
     queryFn: async () => (await api.get<Recipient[]>('/api/users/recipients')).data,
   });
 
-  const mutation = useMutation<MulticastResponse, unknown, { lineUserIds: string[]; text: string }>({
+  const mutation = useMutation<MulticastResponse, unknown, { lineIds: string[]; text: string }>({
     mutationFn: async (body) => (await api.post<MulticastResponse>('/api/messages/multicast', body)).data,
     onSuccess: () => {
       setText('');
@@ -134,7 +134,7 @@ function BroadcastSection() {
 
   const handleSend = () => {
     if (selectedIds.length === 0 || !text.trim()) return;
-    mutation.mutate({ lineUserIds: selectedIds, text: text.trim() });
+    mutation.mutate({ lineIds: selectedIds, text: text.trim() });
   };
 
   const disabled = selectedIds.length === 0 || !text.trim() || mutation.isPending;
@@ -163,8 +163,8 @@ function BroadcastSection() {
               className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
             >
               {recipients.map((r) => (
-                <option key={r.lineUserId} value={r.lineUserId}>
-                  {r.displayName} — {r.lineUserId} {r.officialAccountFollowed ? '' : '（未追蹤 OA）'}
+                <option key={r.lineId} value={r.lineId}>
+                  {r.lineDisplayName} — {r.lineId} {r.oaFriendFlag ? '' : '（未追蹤 OA）'}
                 </option>
               ))}
             </select>

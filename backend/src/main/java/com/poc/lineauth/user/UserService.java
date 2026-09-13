@@ -14,20 +14,20 @@ public class UserService {
     }
 
     @Transactional
-    public User upsertFromLineProfile(LineProfile profile, boolean officialAccountFollowed) {
-        return userRepository.findByLineUserId(profile.userId())
+    public User upsertFromLineProfile(LineProfile profile, boolean oaFriendFlag) {
+        return userRepository.findByLineId(profile.userId())
             .map(existing -> {
-                existing.setDisplayName(profile.displayName());
-                existing.setPictureUrl(profile.pictureUrl());
-                existing.setOfficialAccountFollowed(officialAccountFollowed);
+                existing.setLineDisplayName(profile.displayName());
+                existing.setLinePictureUrl(profile.pictureUrl());
+                existing.setOaFriendFlag(oaFriendFlag);
                 return existing;
             })
             .orElseGet(() -> {
                 User u = new User();
-                u.setLineUserId(profile.userId());
-                u.setDisplayName(profile.displayName());
-                u.setPictureUrl(profile.pictureUrl());
-                u.setOfficialAccountFollowed(officialAccountFollowed);
+                u.setLineId(profile.userId());
+                u.setLineDisplayName(profile.displayName());
+                u.setLinePictureUrl(profile.pictureUrl());
+                u.setOaFriendFlag(oaFriendFlag);
                 return userRepository.save(u);
             });
     }

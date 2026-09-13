@@ -26,8 +26,8 @@ sequenceDiagram
     BE->>LINE: GET profile (Bearer access_token)
     LINE-->>BE: userId / displayName / pictureUrl
     BE->>LINE: GET friendship/v1/status (Bearer access_token)
-    LINE-->>BE: friendFlag (是否已加入官方帳號)
-    BE->>DB: upsert 使用者 (依 lineUserId, 含 officialAccountFollowed)
+    LINE-->>BE: friendFlag 在(是否已加入官方帳號)
+    BE->>DB: upsert 使用者 (依 lineId, 含 oaFriendFlag)
     DB-->>BE: User
     BE->>BE: 簽發自家 JWT
     BE-->>U: 302 轉址至前端 /auth/callback?token=JWT
@@ -39,7 +39,7 @@ sequenceDiagram
     BE->>BE: JwtAuthFilter 驗證 JWT
     BE->>DB: 依 JWT subject 查 User
     DB-->>BE: User
-    BE-->>FE: 使用者資料 (200)<br/>含 officialAccountFollowed / oaAddFriendUrl
+    BE-->>FE: 使用者資料 (200)<br/>含 oaFriendFlag / oaAddFriendUrl
     FE-->>U: 顯示商品頁與使用者資訊<br/>未加入官方帳號則顯示「加入官方帳號」提示按鈕
 
     Note over U,LINE: 階段五 推播訊息 (Multicast)
@@ -47,8 +47,8 @@ sequenceDiagram
     FE->>BE: GET /api/users/recipients (Bearer JWT)
     BE->>DB: 查詢所有 User (含未追蹤者)
     DB-->>BE: User 清單
-    BE-->>FE: 收件人清單<br/>(lineUserId / displayName / officialAccountFollowed)
-    FE->>BE: POST /api/messages/multicast<br/>{ lineUserIds[], text } (Bearer JWT)
+    BE-->>FE: 收件人清單<br/>(lineId / lineDisplayName / oaFriendFlag)
+    FE->>BE: POST /api/messages/multicast<br/>{ lineIds[], text } (Bearer JWT)
     BE->>BE: JwtAuthFilter 驗證 JWT<br/>@Valid 檢查 payload
     BE->>LINE: POST /v2/bot/message/multicast<br/>(Bearer channelAccessToken)
     LINE-->>BE: 200 OK + x-line-request-id<br/>(未追蹤者由 LINE 靜默略過)
@@ -56,8 +56,8 @@ sequenceDiagram
     FE-->>U: 顯示「已送出 N 位」與 requestId
 
     Note over U,LINE: 補充 單人推播 (Push)
-    FE->>BE: POST /api/messages/push<br/>{ lineUserId, text } (Bearer JWT)
-    BE->>DB: 依 lineUserId 查 User
+    FE->>BE: POST /api/messages/push<br/>{ lineId, text } (Bearer JWT)
+    BE->>DB: 依 lineId 查 User
     alt 找不到 User
         BE-->>FE: 404 Not Found
     else 未追蹤官方帳號 (本地快取)

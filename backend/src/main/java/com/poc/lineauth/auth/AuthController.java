@@ -110,10 +110,10 @@ public class AuthController {
     public ResponseEntity<Map<String, Object>> me(@AuthenticationPrincipal User user) {
         return ResponseEntity.ok(Map.of(
                 "id", user.getId(),
-                "lineUserId", user.getLineUserId(),
-                "displayName", user.getDisplayName(),
-                "pictureUrl", user.getPictureUrl() == null ? "" : user.getPictureUrl(),
-                "officialAccountFollowed", user.isOfficialAccountFollowed(),
+                "lineId", user.getLineId(),
+                "lineDisplayName", user.getLineDisplayName(),
+                "linePictureUrl", user.getLinePictureUrl() == null ? "" : user.getLinePictureUrl(),
+                "oaFriendFlag", user.isOaFriendFlag(),
                 "oaAddFriendUrl", lineProps.oaAddFriendUrl()
         ));
     }

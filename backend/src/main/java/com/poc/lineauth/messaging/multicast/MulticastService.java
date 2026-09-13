@@ -20,7 +20,7 @@ public class MulticastService {
     }
 
     public MulticastResponse multicast(MulticastRequest req) {
-        String requestId = client.multicastText(req.lineUserIds(), req.text());
-        return MulticastResponse.sent(requestId, req.lineUserIds().size());
+        String requestId = client.multicastText(req.lineIds(), req.text());
+        return MulticastResponse.sent(requestId, req.lineIds().size());
     }
 }
